@@ -1,0 +1,34 @@
+name: Verify figure transfer
+on:
+  push:
+    branches: [work/deepseek-v41-layer0]
+    paths: ['.github/workflows/asset-transfer.yml', '.bootstrap/**']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check binary transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import os,json,urllib.request,base64,hashlib
+          sha='d3852431af48a73b03efdb398c5d786f6d499954'
+          req=urllib.request.Request('https://api.github.com/repos/AbsurdMirror/myBlog/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          blob=json.load(urllib.request.urlopen(req))
+          data=base64.b64decode(blob['content'])
+          enc=base64.b64encode(data).decode()
+          print('BYTES',len(data),'BASE64',len(enc))
+          print('CONTEXT',enc[1400:1650])
+          print('TAIL',enc[-100:])
+          corrected=enc.replace('SgiQi0+YNuqpk82','SgiQi0+YNuqpRtTH4d1MNurasChBWg4izDbjtbQvrJeREhEVGzIv6AVtowygiNoUidy53t4OQTflqTXyCQi0+YNuqpk82')
+          corrected=corrected.rstrip('=')
+          corrected=corrected[:11996]+'Gac'
+          try:
+            out=base64.b64decode(corrected+'='*((-len(corrected))%4))
+            print('REPAIRED',len(out),hashlib.sha1(b'blob '+str(len(out)).encode()+b'\0'+out).hexdigest())
+          except Exception as exc: print(type(exc).__name__,str(exc))
+          PY
