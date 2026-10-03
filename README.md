@@ -1,27 +1,37 @@
 # 图解技术笔记
 
-以 Markdown 和原始配图为内容源，持续整理模型、算子与系统架构。先讲数学逻辑，再讲实现和性能。
+Markdown＋原始配图是唯一内容源。模型系列先建立数学计算与 shape，再讨论执行实现。
 
-## 分支与发布
+## 维护与分支
 
-- `main`：正式文档源码与维护规范。
-- `work/<topic>`：正在审阅的正文、配图和站点修改；通过 PR 合入。
-- `gh-pages`：暂时保留旧 Hexo 站点，本轮不更新，不触发站点切换。
-- `backup/hexo-before-rebuild-20261003`：旧站快照，指向 `439738a6b8ba88ab7a6b4d6c1df8ba4a267c940d`。
+- `main`：确认后的源码；`work/deepseek-v41-layer0`：当前样章草稿。
+- `backup/hexo-before-rebuild-20261003`：旧站备份；`gh-pages`：旧线上站点，未改动。
+- `archive/hexo-site/` 直接保留重构前整棵 Git tree，不重写历史。
 
-当前正在制作 DeepSeek-V4.1-Flash 的 Layer 0 图解样章。主分支不放未经确认的模型分析；草稿在工作分支预览。
+[写作规则](AUTHORING.md) · [样章](docs/models/deepseek-v4.1-flash/02-layer0.md) · [进度](progress/deepseek-v4.1-flash.md)
 
-## 内容目录
+## 预览
 
-- `docs/models/<model>/`：模型系列，先全貌，再基准层、差异层、特殊模块、推理过程、存储与计算分析。
-- `docs/posts/`：独立文章，不要求拆成系列。
-- `docs/legacy/`：旧文章归档入口。
-- `archive/hexo-site/`：重构前生成站点的原始文件，完整保留，不作为新正文源。
-- `progress/`：进度、事实核查、配图问题和发布检查，不进入阅读站点。
-- `scripts/`：图文校验、渲染与导出工具。
+依赖 Python 3.11+、Pandoc 2.17+。常规站点另外安装 `requirements.txt` 中的 MkDocs。正文经 Pandoc 输出原生 MathML，无外部字体、公式 CDN 或图片图床。
 
-阅读入口见 [docs/index.md](docs/index.md)。写作与更新规则见 [AUTHORING.md](AUTHORING.md)。
+```sh
+python scripts/check.py
+python scripts/preview.py --output .preview/layer0.html
+# 直接用浏览器打开 .preview/layer0.html，单文件包含原图
+python -m pip install -r requirements.txt
+python scripts/stage.py --preview
+mkdocs build --strict
+mkdocs serve
+```
 
-## 公开范围
+`--preview` 收录草稿；不加该选项只拷贝 status=published 的页面及实际引用的资源到 .build/docs，草稿不进入发布物。静态站点和离线预览共用 CSS、查看器和 Pandoc 的正文渲染。
 
-这是公开仓库。工作分支、PR 和草稿同样可能被任何人读取；不提交密钥、私人笔记、完整聊天记录或无公开授权的材料。文章的 `draft` 标记仅控制网站是否发布，不提供隐私保护。
+## 发布
+
+发布工作流仅允许 main 手动触发，并要求输入 PUBLISH；本轮不触发。需要先把 Pages Source 切换为 GitHub Actions，并完成用户确认与完整检查。当前默认分支仍是 gh-pages，尚未更改；新分支通过明确 URL 访问。
+
+## 图片入库状态
+
+工作分支已有图清单及相对路径；五张原始 PNG 在当前交付的完整源码包与 HTML 内。当前 GitHub 连接没有接受本地图片文件的上传动作，远端 PNG 尚未完成。将源码包的 docs/models/deepseek-v4.1-flash/assets/ 五张 PNG 原样写入对应目录后运行校验；SHA256 必须与 figures.json 一致，不以缩略图或占位图替代。
+
+该仓库公开，工作分支不是私人草稿空间。禁止提交密钥、私人笔记或完整对话。

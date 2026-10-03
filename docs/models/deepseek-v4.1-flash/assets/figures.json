@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "figures": [
+    {
+      "id": "layer0-01",
+      "file": "01_layer0_overview.png",
+      "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4",
+      "bytes": 1372471,
+      "width": 1422,
+      "height": 1106,
+      "selection": "user-selected",
+      "semantic_review": "needs-annotation-review",
+      "notes": ["第0层顶部pre为固定[1,0,0,0]；comb的16按每token元素数读。"]
+    },
+    {
+      "id": "layer0-02",
+      "file": "02_mhc_mixes_raw.png",
+      "sha256": "389a9cba4f46d3629d41987f7ef573a72326b3ae4bdcc3fc528e2d5b59927caf",
+      "bytes": 1883417,
+      "width": 1086,
+      "height": 1448,
+      "selection": "user-selected",
+      "semantic_review": "needs-annotation-review",
+      "notes": ["投影还读取Xf，不能把r视为唯一输入；保留原图不改线。"]
+    },
+    {
+      "id": "layer0-03",
+      "file": "03_mhc_coefficient_generation.png",
+      "sha256": "6bb128eedd969ca3c0fd384fcc0ed448f3bc4b10e3e682f67dc802cd56b85e7f",
+      "bytes": 2862228,
+      "width": 1024,
+      "height": 1536,
+      "selection": "user-selected",
+      "semantic_review": "needs-annotation-review",
+      "notes": ["底部epsilon括号容易误读；应在row Softmax之后相加。"]
+    },
+    {
+      "id": "layer0-04",
+      "file": "04_mhc_hc_pre.png",
+      "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5",
+      "bytes": 1768649,
+      "width": 1448,
+      "height": 1086,
+      "selection": "user-selected",
+      "semantic_review": "reviewed",
+      "notes": []
+    },
+    {
+      "id": "layer0-05",
+      "file": "05_mhc_hc_post.png",
+      "sha256": "457a6e636beffc5d3cd6cccb8d05b62b10c2597598d9e72c26f94e7bf12c0c84",
+      "bytes": 2069709,
+      "width": 1448,
+      "height": 1086,
+      "selection": "user-selected",
+      "semantic_review": "needs-annotation-review",
+      "notes": ["右侧固定输出j应读取全部4路Xi；post_j广播形状为[B*S,1]。"]
+    }
+  ]
+}

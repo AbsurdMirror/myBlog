@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-10-03",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "revision_candidate": "2cba9e42aa026125f3ed06c6d98c1db82f7ca027",
+  "revision_content_verified": false,
+  "verification_scope": "main fetched through web tool; pinned revision fetch failed",
+  "sources": [
+    {"path":"inference/config.json","url":"https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json"},
+    {"path":"inference/model.py","url":"https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py"},
+    {"path":"inference/kernel.py","url":"https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py"}
+  ]
+}
