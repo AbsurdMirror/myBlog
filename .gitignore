@@ -1,0 +1,12 @@
+site/
+.preview/
+.build/
+dist/
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+.env
+.env.*
+!.env.example
