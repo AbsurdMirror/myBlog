@@ -3,44 +3,99 @@
 <body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
 <aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
 <main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="deepseek-v4.1-flash-图解系列">DeepSeek-V4.1-Flash 图解系列</h1>
-<p>从模型的外部状态开始，选取基准层建立数学理解，再讨论其他层差异、推理过程与成本。当前只展开已讨论的 Layer 0，不把未确认部分填成结论。</p>
+<p>本系列研究 <strong>DeepSeek-V4.1-Flash</strong> 的结构、数学计算与推理状态。以 Layer 0 为基准层，逐步理解其他层的差异和特殊模块，最后串起完整推理与成本分析。其他变体的配置和层分类不直接沿用。</p>
+<p>当前规划为 <strong>约六篇技术正文＋一个系列目录页</strong>。目前第②篇已发布，其余五篇尚未开始正文；它们是阅读规划，不表示内容已经完成。篇目可随后续讨论调整，过长章节必要时再拆分。</p>
+<h2 id="阅读顺序与完成状态">阅读顺序与完成状态</h2>
 <table>
 <colgroup>
-<col style="width: 50%" />
-<col style="width: 50%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
 </colgroup>
 <thead>
 <tr class="header">
 <th>篇目</th>
-<th>内容与状态</th>
+<th>解决的问题与范围</th>
+<th>前置阅读</th>
+<th>当前状态</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>01 模型全貌</td>
-<td>输入输出、层分类、状态与缓存；计划中</td>
+<td>① 模型全貌</td>
+<td>输入输出、整体主干、层分类、层间数据及缓存概览；建立模型地图，不逐算子推导</td>
+<td>无</td>
+<td>规划中，正文尚未开始</td>
 </tr>
 <tr class="even">
-<td><a href="02-layer0.html">02 Layer 0 基准层</a></td>
-<td>八模块、mHC、RMSNorm、SWA、MoE；已有五张配图的审阅稿</td>
+<td><a href="02-layer0.html">② Layer 0：基准层详解</a></td>
+<td>八模块、四路残差、mHC、RMSNorm、SWA、MoE；公式、shape、参数与状态</td>
+<td>先了解本文符号；①完成后建议先读①</td>
+<td>已发布，含五张原图；持续修订</td>
 </tr>
 <tr class="odd">
-<td>03 其他层的差异</td>
-<td>生成／复用 KV、重新索引、解码器入口；计划中</td>
+<td>③ 其他层的差异</td>
+<td>相对 Layer 0 的新增、删除、变化与复用；标清完整流程中的位置与接口</td>
+<td>①、②</td>
+<td>规划中，正文尚未开始</td>
 </tr>
 <tr class="even">
-<td>04 特殊模块</td>
-<td>Engram、视觉与其他独立模块；计划中</td>
+<td>④ 特殊模块详解</td>
+<td>候选主题为 Engram、视觉路径、DSpark 等；展开作用、接入位置、内部计算与状态</td>
+<td>①、②及相关差异层</td>
+<td>规划中，逐项讨论后展开</td>
 </tr>
 <tr class="odd">
-<td>05 完整推理过程</td>
-<td>Prefill／Decode 状态流转；计划中</td>
+<td>⑤ 完整推理过程</td>
+<td>Prefill、Decode、多轮对话的依赖、时间顺序与状态生命周期</td>
+<td>①—④中相关内容</td>
+<td>规划中，正文尚未开始</td>
 </tr>
 <tr class="even">
-<td>06 存储与计算</td>
-<td>参数、缓存、激活、运算和实现；计划中</td>
+<td>⑥ 存储与计算分析</td>
+<td>权重、持久缓存、临时激活、计算量、访存量及实现与硬件映射</td>
+<td>前述结构与推理篇</td>
+<td>规划中，正文尚未开始</td>
 </tr>
 </tbody>
 </table>
-<p>模型上游：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">deepseek-ai/DeepSeek-V4.1-Flash</a>。本轮在 2026-10-03 核对 main 配置与参考前向。候选 revision 已记录，但固定版本文件访问尚未核实，因此本文不是已完成版本锁定的复现报告。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · <br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<p>目前可直接从第②篇开始阅读。尚未写成正文的篇目不提供空链接，也不发布占位页面。第③篇复用基准层已经讲清的模块；第④篇讲特殊模块内部算法；实际字节数、性能和硬件执行集中到第⑥篇。</p>
+<h2 id="版本与资料依据">版本与资料依据</h2>
+<p>官方资料入口：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">deepseek-ai/DeepSeek-V4.1-Flash</a>。既有正文依据此前对官方 main 配置与参考前向的核查整理，核查记录日期为 2026-10-03；本次目录更新没有重新核实模型事实。</p>
+<p>候选 revision 尚未成功读回验证，因此当前<strong>未锁定上游源码版本</strong>。文章已发布不表示全部技术细节均已核实；已知原图标注歧义由正文相邻说明保留。</p>
+<h2 id="共用符号">共用符号</h2>
+<table>
+<thead>
+<tr class="header">
+<th>记号</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>B</code></td>
+<td>batch，独立会话数</td>
+</tr>
+<tr class="even">
+<td><code>S</code></td>
+<td>本次处理的 token 数</td>
+</tr>
+<tr class="odd">
+<td><code>S_his</code></td>
+<td>参与评分的 KV 总长度，包含本次已加入的 token</td>
+</tr>
+<tr class="even">
+<td><code>B*S</code></td>
+<td>逐 token 独立运算时展平的行数，不表示跨会话混合</td>
+</tr>
+<tr class="odd">
+<td><code>hidden</code> / <code>D</code></td>
+<td>隐藏维度；Layer 0 正文取 <code>D=5120</code></td>
+</tr>
+</tbody>
+</table>
+<p>完整序列示例明确 <code>S_his=S</code>；带历史缓存的场景另行声明。可学习权重、运行时系数和固定常数分别说明。</p>
+<h2 id="第②篇的配图进度">第②篇的配图进度</h2>
+<p>现有五张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张。RMSNorm、SWA、MoE 专用图待后续讨论后补充，继续归入第②篇。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-04<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
