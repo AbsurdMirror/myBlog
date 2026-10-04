@@ -1,7 +1,7 @@
 ---
 title: 图解技术笔记
 status: published
-updated: 2026-10-03
+updated: 2026-10-04
 ---
 
 # 图解技术笔记
@@ -16,7 +16,9 @@ updated: 2026-10-03
 
 当前篇章含五张手绘原图：整层结构、混合系数生成两图、四路汇聚、残差融合。复杂图可以点开放大，公式和 shape 同时保留为文本。
 
-[系列目录与资料说明](models/deepseek-v4.1-flash/index.md)
+[系列目录、六篇阅读规划与资料说明](models/deepseek-v4.1-flash/index.md)
+
+系列规划为约六篇正文＋一个目录页，目前 Layer 0 已发布，其他篇目待后续讨论逐步展开。
 
 ## 旧文归档
 
