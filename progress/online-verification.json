@@ -1,0 +1,65 @@
+{
+  "source_commit": "7bf65381a9f1e20a25c048aaa8ac30fcceb12a26",
+  "publication_run": 37163731243,
+  "images": [
+    {
+      "file": "01_layer0_overview.png",
+      "status": 200,
+      "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4"
+    },
+    {
+      "file": "02_mhc_mixes_raw.png",
+      "status": 200,
+      "sha256": "389a9cba4f46d3629d41987f7ef573a72326b3ae4bdcc3fc528e2d5b59927caf"
+    },
+    {
+      "file": "03_mhc_coefficient_generation.png",
+      "status": 200,
+      "sha256": "6bb128eedd969ca3c0fd384fcc0ed448f3bc4b10e3e682f67dc802cd56b85e7f"
+    },
+    {
+      "file": "04_mhc_hc_pre.png",
+      "status": 200,
+      "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5"
+    },
+    {
+      "file": "05_mhc_hc_post.png",
+      "status": 200,
+      "sha256": "457a6e636beffc5d3cd6cccb8d05b62b10c2597598d9e72c26f94e7bf12c0c84"
+    }
+  ],
+  "url": "https://absurdmirror.github.io/myBlog/models/deepseek-v4.1-flash/02-layer0.html",
+  "verified_utc": "2026-10-04T00:06:16.272684+00:00",
+  "pages_commit": "eee5b99242f111496b71914061cb2b7fc4353936",
+  "pages_run": 37163751502,
+  "main_image_readback": true,
+  "legacy_urls": [
+    "archives/index.html",
+    "2024/01/21/deploy-to-github-pages/index.html",
+    "2024/01/09/my-first-blog/index.html",
+    "2025/04/21/hexo-blog-setup-guide/index.html",
+    "2025/04/21/hello-world/index.html",
+    "categories/教程/index.html",
+    "categories/技术分享/index.html",
+    "archives/2024/index.html",
+    "archives/2025/index.html",
+    "archives/2024/01/index.html",
+    "archives/2025/04/index.html",
+    "tags/测试/index.html",
+    "tags/教程/index.html",
+    "tags/GitHub-Pages/index.html",
+    "tags/Hexo/index.html",
+    "tags/博客/index.html"
+  ],
+  "browser": {
+    "viewport": 1363,
+    "whole_page_horizontal_overflow": false,
+    "images_loaded": 5,
+    "mathml_nodes": 75,
+    "toc_entries": 19,
+    "viewer_100_percent_and_close": true,
+    "mobile_retested": false
+  },
+  "default_branch": "gh-pages",
+  "default_branch_change": "Not exposed by connector; browser not authenticated."
+}
