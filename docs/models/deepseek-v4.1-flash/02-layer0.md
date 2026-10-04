@@ -2,7 +2,7 @@
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
 status: published
-updated: 2026-10-03
+updated: 2026-10-04
 order: 2
 ---
 
@@ -10,7 +10,7 @@ order: 2
 
 第 0 层可以先看成两个串行子层：**局部 Attention（SWA）与 MoE 前馈网络**。它们之间传递的不是一条隐藏向量，而是四路残差流；mHC 负责将四路汇聚成一路供子层计算，再把结果融合回四路。[配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json) · [Block 定义](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
-本文以已经讨论过的数学关系为主线，配合五张采用版原图。图中的已知歧义在相邻文字中注明，未擅自重画。量化存储、kernel 调度与性能估算放在后续文章。
+本文按整层数据流展开，说明 mHC 的系数生成、四路汇聚与残差融合，再介绍局部 Attention 和 MoE 的数学计算。图中文字的歧义在相邻阅读说明中澄清。量化存储、kernel 调度与性能估算放在后续文章。
 
 ## 1. 先固定符号与输入输出
 
@@ -18,13 +18,16 @@ order: 2
 |---|---|
 | `B` | 独立会话的 batch 数 |
 | `S` | 本次处理的 token 数；正文的完整序列示例取历史总长 `S_his=S` |
+| `S_his` | 参与本次评分的 KV 序列总长度，包括本次已加入 KV 的 token；不是局部缓存的物理容量 |
 | `B*S` | 逐 token 独立计算时展平的行数，不表示合并会话 |
 | `D=5120` | 每路隐藏维度 |
 | `H=4` | mHC 残差流数，不是注意力头数 |
 | `X`、`X'` | 子层入口与出口的四路残差，均为 `[B*S,4,5120]` |
 | `Z`、`Y` | 汇聚得到的单路输入、子层的单路输出，均为 `[B*S,5120]` |
 
-线性权重统一按 **`[输出维度,输入维度]`** 写，乘法使用 $XW^T$。层号、流编号从 0 开始。参数量是逻辑参数个数，不是量化后的字节数；运行时系数与固定常数不计作可学习权重。
+线性权重统一按 **`[输出维度,输入维度]`** 写，乘法使用 $XW^T$。层号、流编号从 0 开始。mHC 中 token 下标 $t\in[0,B*S)$，流下标 $i,j\in\{0,1,2,3\}$，单路 hidden 下标 $d\in[0,5120)$；Sinkhorn 迭代使用 $\ell$。参数量是逻辑参数个数，不是量化后的字节数；运行时系数与固定常数不计作可学习权重。
+
+在本文的文本输入场景中，进入 Layer 0 前，每个 token 的 embedding 被复制为四路，形成 `X:[B*S,4,5120]`。四路初始值相同；初始汇聚系数为 `pre_cur=[1,0,0,0]`，因此首次汇聚直接取第 0 路，得到原始 embedding。四路随后通过残差混合和子层输出写入继续更新，后续不要求它们始终相同。
 
 ## 2. 八个主模块与两条残差旁路
 
@@ -43,11 +46,19 @@ order: 2
 | ⑦ | MoE FFN | `[B*S,5120]` → `[B*S,5120]` |
 | ⑧ | MoE 的 mHC 残差融合 | 单路输出＋本子层原四路残差 → `[B*S,4,5120]` |
 
+八模块指残差主线上的八个阶段；两套混合系数生成器作为旁路计算单独展开，不计入这八项。`hc_pre`、`hc_post` 分别是汇聚与残差融合操作，`pre`、`post` 是它们使用的系数；`hc_post` 同时读取 `post` 和 `comb`。
+
 四路残差在入口分出旁路，一直保留到该子层出口。MoE 的“原四路”是 Attention 融合后的结果，不是整层最初的输入。**第 0 层没有全局 KV 分支与 Engram**；其他层的差异另文处理。
 
 > 图 1 阅读补充：顶部输入 `pre` 在第 0 层首次汇聚时不是来自更早的层，而是每个 token 固定为 `[1,0,0,0]`。图中 `comb` 旁的 16 表示每个 token 的元素个数，逻辑 shape 为 `[B*S,4,4]`。
 
+Layer 0 的出口包含更新后的四路残差 `[B*S,4,5120]`，以及 MoE 侧生成、供 Layer 1 Attention 使用的 `pre_next:[B*S,4]`。
+
 ## 3. mHC：系数生成、汇聚与残差融合
+
+mHC 将四路残差与一个子层连接起来：`pre` 将四路汇聚成该子层的一路输入；`post` 控制子层输出写入各路的强度；`comb` 重新混合保留的四路残差。系数由输入动态生成，投影、scale 和 base 才是可学习参数。Attention 和 MoE 各有一套独立的系数生成参数。mHC 对本次 `B*S` 个 token 独立运算，历史总长 `S_his` 不改变其行数。
+
+本文采用 Single-Pass 时序：当前子层用已准备好的 `pre_cur` 做汇聚；当前生成器产生的 `pre_next` 用于下一个子层，而 `post` 和 `comb` 用于当前子层出口。下文先解释三类系数的数学计算，3.5 再列出完整使用位置。
 
 ### 3.1 系数生成前半段：四路 X → raw mixes M
 
@@ -65,6 +76,8 @@ $$
 M=(X_fW_{\mathrm{HC}}^T)\odot r
 $$
 
+`r` 对每个 token 是一个标量。在精确算术下，$(X_f\odot r)W_{\mathrm{HC}}^T$ 与 $(X_fW_{\mathrm{HC}}^T)\odot r$ 相等，因此可以将其理解为对四路展平输入做 RMS 缩放后再投影。参考代码先完成投影，再沿 24 维广播乘以 `r`；浮点运算顺序可能带来舍入差异。
+
 | 对象 | shape | 性质 |
 |---|---|---|
 | $r$ | `[B*S,1]` | 当前输入算出的缩放因子，沿 24 维广播 |
@@ -80,7 +93,7 @@ $$
 
 *图 3 · `hc_scale` 的三个标量分别作用于三组 raw mixes；`hc_base` 按 4＋4＋16 拆分。每个 token 最终获得两个 4 维向量和一个 4×4 矩阵。*
 
-定义可学习参数：$s=[s_0,s_1,s_2]:[3]$，$b_{\mathrm{pre}}:[4]$、$b_{\mathrm{post}}:[4]$、$b_{\mathrm{comb}}:[16]$。计算：
+定义可学习参数：$s=[s_0,s_1,s_2]:[3]$，$b_{\mathrm{pre}}:[4]$、$b_{\mathrm{post}}:[4]$、$b_{\mathrm{comb}}:[16]$。这些参数对所有 token 共用，沿 token 维广播。本节生成的 `pre` 即供下一个子层使用的 `pre_next`。计算：
 
 $$
 pre=\sigma(s_0M_{\mathrm{pre}}+b_{\mathrm{pre}})+\epsilon_{\mathrm{hc}}
@@ -95,6 +108,8 @@ C_0=\operatorname{reshape}_{4\times4}(s_2M_{\mathrm{comb}}+b_{\mathrm{comb}})
 $$
 
 其中 $\sigma(x)=1/(1+e^{-x})$，$\epsilon_{\mathrm{hc}}=10^{-6}$。最终 `pre`、`post` 均为 `[B*S,4]`；$C_0$ 为 `[B*S,4,4]`，尚不是最终 `comb`。
+
+对每个 token，将 16 个 comb raw 值按顺序重排为 4×4 矩阵：第 `4*i+j` 个值对应输入流 i 到输出流 j。行 Softmax 沿输出流 j 进行；行归一化固定 i，列归一化固定 j。以下计算都在每个 token 的 4×4 矩阵内独立进行。
 
 **comb 的 20 轮究竟怎么算？** 对每个 token 的 4×4 矩阵，定义：
 
@@ -113,16 +128,18 @@ $$
 再重复 19 次：
 
 $$
-C^{(t)}=\operatorname{ColNorm}_{\epsilon_{\mathrm{hc}}}\!\left(\operatorname{RowNorm}_{\epsilon_{\mathrm{hc}}}(C^{(t-1)})\right),\quad t=1,\ldots,19
+C^{(\ell)}=\operatorname{ColNorm}_{\epsilon_{\mathrm{hc}}}\!\left(\operatorname{RowNorm}_{\epsilon_{\mathrm{hc}}}(C^{(\ell-1)})\right),\quad \ell=1,\ldots,19
 $$
 
 $$
 comb=C^{(19)}:[B*S,4,4]
 $$
 
-也就是 **1 次行 Softmax＋20 次列归一化＋19 次普通行归一化**。有限迭代和分母中的 epsilon 使行列和只是近似 1。这种约束限制残差混合的总系数，不等于保证所有残差向量不同，也不保证每个向量范数严格不变。[核查：`hc_split_sinkhorn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
+也就是 **1 次行 Softmax＋20 次列归一化＋19 次普通行归一化**。有限迭代和分母中的 epsilon 使行列和只是近似 1。对固定输出流 j，comb 的一列使旧四路形成近似凸组合；`hc_post` 还额外加入 `post_j*Y`，因此不能由 comb 的约束推断最终输出幅度或范数严格不变。[核查：`hc_split_sinkhorn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
 
-> 图 3 待修订：底部公式的括号容易把 epsilon 画成 Softmax 的输入；正确位置是 **行 Softmax 之后加 epsilon，再列归一化**。原图保留，以上公式为准。图中的 `Sinkhorn^19` 表示 19 次“行归一化→列归一化”，不是再执行 19 套各 20 轮的完整算法。
+> 图 3 阅读说明：底部公式的括号容易把 epsilon 画成 Softmax 的输入；正确位置是 **行 Softmax 之后加 epsilon，再列归一化**。此处按以上公式理解。图中的 `Sinkhorn^19` 表示 19 次“行归一化→列归一化”，不是再执行 19 套各 20 轮的完整算法。
+
+`pre` 的每项在理想数学区间 $(\epsilon_{\mathrm{hc}},1+\epsilon_{\mathrm{hc}})$ 内，`post` 的每项在 $(0,2)$ 内；它们都不强制四项之和为 1，因此不是四路 Softmax 概率。有限精度 sigmoid 可能舍入至区间端点。`comb` 为正值矩阵，经迭代使行列和接近 1。
 
 一套生成器的逻辑参数量如下，Attention 与 MoE 各有独立的一套：
 
@@ -161,7 +178,7 @@ $$
 
 输出 $X':[B*S,4,5120]$。第一项把同一个子层输出按不同强度写到四路；第二项把旧四路重新组合。两项都不改变 hidden 维度。
 
-> 图 5 待修订：右半边应固定输出流 j，并遍历四个输入流 i。输入必须包含全部 X₀～X₃；`comb[:,:,j]` 为 `[B*S,4]`，`post[:,j]` 广播时为 `[B*S,1]`，而不是图中标出的宽度 4。四个加权残差项与一个加权 Y 相加，才得到单路 $X'_j:[B*S,5120]$。
+> 图 5 阅读说明：右半边应固定输出流 j，并遍历四个输入流 i。输入必须包含全部 X₀～X₃；`comb[:,:,j]` 为 `[B*S,4]`，`post[:,j]` 广播时为 `[B*S,1]`，而不是图中标出的宽度 4。四个加权残差项与一个加权 Y 相加，才得到单路 $X'_j:[B*S,5120]$。
 
 ### 3.5 Single-Pass：提前的是下一个子层的 pre
 
@@ -184,7 +201,7 @@ $$
 
 输入输出都是 `[B*S,5120]`。$\gamma:[5120]$ 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 **10,240** 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
-*配图状态：RMSNorm 内部图待绘制；当前以公式说明。*
+
 
 ## 5. 局部 Attention / SWA
 
@@ -242,7 +259,7 @@ $$
 
 每组 8 个头；第一组权重整体为 `[8,1024,4096]`，各组独立。第二级权重为 `[5120,8192]`，合并各组信息。两级之间没有额外非线性。这得到 Attention 的单路输出 Y，再交给 mHC 融合。
 
-*配图状态：SWA 内部图待绘制；以上只描述数学对象，不宣称实现分配完整分数矩阵。*
+以上描述数学对象，不表示实现会分配完整分数矩阵。
 
 ## 6. MoE 前馈计算
 
@@ -280,7 +297,7 @@ $$
 
 每个 token 的 6 个路由专家输出可记作 `[B*S,6,5120]`，沿 6 求和得到 `[B*S,5120]`，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。[核查：`MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
-*配图状态：MoE 内部图待绘制。这里定义数学函数，不表示真的对每个 token 计算全部 384 个专家。*
+这里定义数学函数，不表示实际对每个 token 计算全部 384 个专家。
 
 ## 7. 本层参数与状态汇总
 
@@ -297,16 +314,14 @@ $$
 
 推导检查：单专家参数为 $3\times5120\times2304=35,389,440$；MoE 为 $385\times35,389,440+384\times5120+2\times384$。每 token 只激活 6 个路由专家和共享专家，不能用总参数量直接代替当次计算量。
 
-本层对后续层输出四路残差 `[B*S,4,5120]`，以及给下一层 Attention 的 `pre:[B*S,4]`；它自己的局部 KV 状态逻辑容量为 `[B,128,512]`。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。
+本层对后续层输出四路残差 `[B*S,4,5120]`，以及给下一层 Attention 的 `pre_next:[B*S,4]`；它自己的局部 KV 状态逻辑容量为 `[B,128,512]`。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。
 
-## 8. 来源、审核与后续
+## 8. 资料来源与版本说明
 
-本稿整理自本系列此前的讨论，模型名限定为 **DeepSeek-V4.1-Flash**。以下是此前分析使用的上游资料；此次发布工程不等同于重新核实全部模型事实：
+本文分析对象为 **DeepSeek-V4.1-Flash**，数学关系与维度依据以下上游资料：
 
 - [模型配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json)
 - [模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)：RMSNorm、Attention、Gate、Expert、MoE、Block。
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
-元数据查询返回候选 revision `2cba9e42aa026125f3ed06c6d98c1db82f7ca027`；此前固定 revision 的读取失败，**尚不能将以上 main 内容宣称为已锁定到该提交**。复现锁定属于发布前待办。
-
-后续先处理图 3、图 5 的标注歧义，再补 RMSNorm、SWA 与 MoE 配图；未经讨论的其他层不在本篇推断。本篇作为持续修订的技术笔记；未锁定上游版本及配图歧义均保留明确说明。
+当前引用使用上游 `main` 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。本轮文字核查集中于概述与 mHC，不构成对 SWA、MoE 全部细节的重新验证。图 3 与图 5 的标注按相邻阅读说明理解。
