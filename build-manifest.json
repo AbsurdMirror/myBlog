@@ -1,0 +1,155 @@
+{
+  "format_version": 1,
+  "mode": "published",
+  "source_commit": "7bf65381a9f1e20a25c048aaa8ac30fcceb12a26",
+  "built_utc": "2026-10-04T00:03:51.303308+00:00",
+  "pages": [
+    "index.html",
+    "models/deepseek-v4.1-flash/index.html",
+    "models/deepseek-v4.1-flash/02-layer0.html",
+    "legacy/index.html"
+  ],
+  "legacy_file_count": 23,
+  "files": {
+    ".nojekyll": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "index.html": {
+      "sha256": "b1f64ee832b7dcfe53a4acab2e247722519c85744cfd3e7010bfe5f535e504ec",
+      "bytes": 2639
+    },
+    "404.html": {
+      "sha256": "146d6ae69b10385fdadbc5a55a5b55115c13d6a40a05728b2bad212572d13ae2",
+      "bytes": 171
+    },
+    "js/script.js": {
+      "sha256": "dbcc7147835f4c52214937d268e8b66bada9f945c3570c68328b1ed7578c205e",
+      "bytes": 4125
+    },
+    "js/jquery-3.6.4.min.js": {
+      "sha256": "a0fe8723dcf55da64d06b25446d0a8513e52527c45afcb37073465f9c6f352af",
+      "bytes": 89795
+    },
+    "categories/教程/index.html": {
+      "sha256": "95c6684ffd5ee31b3cfefb993e13f785124fca1e883d07521eb59401732ed123",
+      "bytes": 7462
+    },
+    "categories/技术分享/index.html": {
+      "sha256": "4eba19ce09216eaaaa3f8a2765721972958ac617d2e79621a3cd23f98c27e63e",
+      "bytes": 6655
+    },
+    "archives/index.html": {
+      "sha256": "b2ca4e9ea9bd5c95714ef26baad8b1a24defc987c4592328569157a2be676a1e",
+      "bytes": 8476
+    },
+    "archives/2024/index.html": {
+      "sha256": "7b4cf36827c2587370bb478bccdee4dd044c054d0b0c10c287b6f98cc7c88406",
+      "bytes": 7173
+    },
+    "archives/2024/01/index.html": {
+      "sha256": "36e2c59bdd1ce2babce3ea76587a6f8fbed92fc7e1070bc13bc3b8281ee9d691",
+      "bytes": 7178
+    },
+    "archives/2025/index.html": {
+      "sha256": "edc6ae5dcce44b247b64c8b124b22ae9e0a728af61e1adcf94e70944f8ce72f0",
+      "bytes": 7152
+    },
+    "archives/2025/04/index.html": {
+      "sha256": "a61807916b64eedfc3d57f8806ea9cfd5ccceb481f489edf859d757f5477a0fd",
+      "bytes": 7157
+    },
+    "css/style.css": {
+      "sha256": "60f50f29060e0c5efa3a360d4f107aa8dd7046bfcaafcda43455853f4f0a0c25",
+      "bytes": 23960
+    },
+    "css/images/banner.jpg": {
+      "sha256": "2082212ea71f2527cce4ebad20c7269dece2015dd82b09f657670236f27fe92c",
+      "bytes": 224710
+    },
+    "models/deepseek-v4.1-flash/index.html": {
+      "sha256": "8e0d760bf655f3ee0acd209ea8d29aa5efe85a31c54300fac8e387cf334b3407",
+      "bytes": 3400
+    },
+    "models/deepseek-v4.1-flash/02-layer0.html": {
+      "sha256": "a1b8c248765b765963d81190bb9e5306e23d45a14aff27295b211dfa6f8a46de",
+      "bytes": 58022
+    },
+    "models/deepseek-v4.1-flash/assets/01_layer0_overview.png": {
+      "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4",
+      "bytes": 1372471
+    },
+    "models/deepseek-v4.1-flash/assets/05_mhc_hc_post.png": {
+      "sha256": "457a6e636beffc5d3cd6cccb8d05b62b10c2597598d9e72c26f94e7bf12c0c84",
+      "bytes": 2069709
+    },
+    "models/deepseek-v4.1-flash/assets/03_mhc_coefficient_generation.png": {
+      "sha256": "6bb128eedd969ca3c0fd384fcc0ed448f3bc4b10e3e682f67dc802cd56b85e7f",
+      "bytes": 2862228
+    },
+    "models/deepseek-v4.1-flash/assets/02_mhc_mixes_raw.png": {
+      "sha256": "389a9cba4f46d3629d41987f7ef573a72326b3ae4bdcc3fc528e2d5b59927caf",
+      "bytes": 1883417
+    },
+    "models/deepseek-v4.1-flash/assets/04_mhc_hc_pre.png": {
+      "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5",
+      "bytes": 1768649
+    },
+    "_static/site.css": {
+      "sha256": "019b555bcfa9b972669a4fd15440940671e29781b051c15875283686718494d1",
+      "bytes": 6922
+    },
+    "_static/viewer.js": {
+      "sha256": "6be957ef1f9b6fa346830bb1817357c62820e2e8629200eb6d7f79a23e2ec244",
+      "bytes": 5286
+    },
+    "fancybox/jquery.fancybox.min.js": {
+      "sha256": "cadda460ccb4c3c01bb45f3d5976f63f5adf8dc3ff1d31cb4fbd3ded4f18e5bf",
+      "bytes": 68253
+    },
+    "fancybox/jquery.fancybox.min.css": {
+      "sha256": "5736e3eec0c34bfc288854b7b8d2a8f1e22e9e2e7dae3c8d1ad5dfb2d4734ad0",
+      "bytes": 12795
+    },
+    "2024/01/09/my-first-blog/index.html": {
+      "sha256": "bfe0da1caafa8ce0f0613f0ba4e4c8a59d584e8414de71663b424e203aab28e6",
+      "bytes": 10511
+    },
+    "2024/01/21/deploy-to-github-pages/index.html": {
+      "sha256": "c0684be809086c222a36a792047269d6ba41b8bc32152e32ae76eaac1471e95b",
+      "bytes": 14293
+    },
+    "2025/04/21/hexo-blog-setup-guide/index.html": {
+      "sha256": "92cdf39486a8211a6a233b6243f8c4a718e1d27627485ed3b52d753f2897f84a",
+      "bytes": 17847
+    },
+    "2025/04/21/hello-world/index.html": {
+      "sha256": "660ffa528e33e110b6f7e8c5bd02311536c922232c92b2f04f6c40fa8638d0bd",
+      "bytes": 10498
+    },
+    "legacy/index.html": {
+      "sha256": "150be55b691cbe112c06ae4afaa463a981a8ecd3b7dc1c0223527e1c97959aea",
+      "bytes": 2649
+    },
+    "tags/博客/index.html": {
+      "sha256": "86660cf480f962dd79f59d62f8dddea86b0b333f05fac3432cd34b86f75429f3",
+      "bytes": 7419
+    },
+    "tags/教程/index.html": {
+      "sha256": "95b8a3078e4388b69d7b4eab478582896ca2c78796731a678109f3a50f9bc42b",
+      "bytes": 7451
+    },
+    "tags/GitHub-Pages/index.html": {
+      "sha256": "d6990c7842c92720e2eddde93ac3a31b99b15060e9f163363fa5bb4e36e1408b",
+      "bytes": 6652
+    },
+    "tags/Hexo/index.html": {
+      "sha256": "76e878889a6bfd42a9395e6da5c810ca7018a2acf672c2e7b81eb734d8240f3a",
+      "bytes": 7435
+    },
+    "tags/测试/index.html": {
+      "sha256": "546a07d5af645faf7f3191c1a6095e73792fcd533dc7be63e4668feecbd46593",
+      "bytes": 6620
+    }
+  }
+}
