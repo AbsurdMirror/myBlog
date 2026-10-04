@@ -4,9 +4,13 @@
 <aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
 <main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="layer-0从四路残差到局部注意力与-moe">Layer 0：从四路残差到局部注意力与 MoE</h1>
 <p>第 0 层可以先看成两个串行子层：<strong>局部 Attention（SWA）与 MoE 前馈网络</strong>。它们之间传递的不是一条隐藏向量，而是四路残差流；mHC 负责将四路汇聚成一路供子层计算，再把结果融合回四路。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json">配置</a> · <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">Block 定义</a></p>
-<p>本文以已经讨论过的数学关系为主线，配合五张采用版原图。图中的已知歧义在相邻文字中注明，未擅自重画。量化存储、kernel 调度与性能估算放在后续文章。</p>
+<p>本文按整层数据流展开，说明 mHC 的系数生成、四路汇聚与残差融合，再介绍局部 Attention 和 MoE 的数学计算。图中文字的歧义在相邻阅读说明中澄清。量化存储、kernel 调度与性能估算放在后续文章。</p>
 <h2 id="先固定符号与输入输出">1. 先固定符号与输入输出</h2>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr class="header">
 <th>记号</th>
@@ -23,28 +27,33 @@
 <td>本次处理的 token 数；正文的完整序列示例取历史总长 <code>S_his=S</code></td>
 </tr>
 <tr class="odd">
+<td><code>S_his</code></td>
+<td>参与本次评分的 KV 序列总长度，包括本次已加入 KV 的 token；不是局部缓存的物理容量</td>
+</tr>
+<tr class="even">
 <td><code>B*S</code></td>
 <td>逐 token 独立计算时展平的行数，不表示合并会话</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>D=5120</code></td>
 <td>每路隐藏维度</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>H=4</code></td>
 <td>mHC 残差流数，不是注意力头数</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>X</code>、<code>X'</code></td>
 <td>子层入口与出口的四路残差，均为 <code>[B*S,4,5120]</code></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>Z</code>、<code>Y</code></td>
 <td>汇聚得到的单路输入、子层的单路输出，均为 <code>[B*S,5120]</code></td>
 </tr>
 </tbody>
 </table>
-<p>线性权重统一按 <strong><code>[输出维度,输入维度]</code></strong> 写，乘法使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><msup><mi>W</mi><mi>T</mi></msup></mrow><annotation encoding="application/x-tex">XW^T</annotation></semantics></math>。层号、流编号从 0 开始。参数量是逻辑参数个数，不是量化后的字节数；运行时系数与固定常数不计作可学习权重。</p>
+<p>线性权重统一按 <strong><code>[输出维度,输入维度]</code></strong> 写，乘法使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><msup><mi>W</mi><mi>T</mi></msup></mrow><annotation encoding="application/x-tex">XW^T</annotation></semantics></math>。层号、流编号从 0 开始。mHC 中 token 下标 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>t</mi><mo>∈</mo><mo stretchy="false" form="prefix">[</mo><mn>0</mn><mo>,</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">t\in[0,B*S)</annotation></semantics></math>，流下标 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>i</mi><mo>,</mo><mi>j</mi><mo>∈</mo><mo stretchy="false" form="prefix">{</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo>,</mo><mn>2</mn><mo>,</mo><mn>3</mn><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">i,j\in\{0,1,2,3\}</annotation></semantics></math>，单路 hidden 下标 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mo>∈</mo><mo stretchy="false" form="prefix">[</mo><mn>0</mn><mo>,</mo><mn>5120</mn><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">d\in[0,5120)</annotation></semantics></math>；Sinkhorn 迭代使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>ℓ</mo><annotation encoding="application/x-tex">\ell</annotation></semantics></math>。参数量是逻辑参数个数，不是量化后的字节数；运行时系数与固定常数不计作可学习权重。</p>
+<p>在本文的文本输入场景中，进入 Layer 0 前，每个 token 的 embedding 被复制为四路，形成 <code>X:[B*S,4,5120]</code>。四路初始值相同；初始汇聚系数为 <code>pre_cur=[1,0,0,0]</code>，因此首次汇聚直接取第 0 路，得到原始 embedding。四路随后通过残差混合和子层输出写入继续更新，后续不要求它们始终相同。</p>
 <h2 id="八个主模块与两条残差旁路">2. 八个主模块与两条残差旁路</h2>
 <p><img src="assets/01_layer0_overview.png" alt="图 1：Layer 0 总览，黑线表示主数据及残差，红线表示 mHC 系数传递" /></p>
 <p><em>图 1 · 左侧从上向下计算 Attention，底部四路结果接到右侧，再从下向上计算 MoE。两侧的混合系数生成分支读取各自子层入口的四路残差。</em></p>
@@ -104,11 +113,15 @@
 </tr>
 </tbody>
 </table>
+<p>八模块指残差主线上的八个阶段；两套混合系数生成器作为旁路计算单独展开，不计入这八项。<code>hc_pre</code>、<code>hc_post</code> 分别是汇聚与残差融合操作，<code>pre</code>、<code>post</code> 是它们使用的系数；<code>hc_post</code> 同时读取 <code>post</code> 和 <code>comb</code>。</p>
 <p>四路残差在入口分出旁路，一直保留到该子层出口。MoE 的“原四路”是 Attention 融合后的结果，不是整层最初的输入。<strong>第 0 层没有全局 KV 分支与 Engram</strong>；其他层的差异另文处理。</p>
 <blockquote>
 <p>图 1 阅读补充：顶部输入 <code>pre</code> 在第 0 层首次汇聚时不是来自更早的层，而是每个 token 固定为 <code>[1,0,0,0]</code>。图中 <code>comb</code> 旁的 16 表示每个 token 的元素个数，逻辑 shape 为 <code>[B*S,4,4]</code>。</p>
 </blockquote>
+<p>Layer 0 的出口包含更新后的四路残差 <code>[B*S,4,5120]</code>，以及 MoE 侧生成、供 Layer 1 Attention 使用的 <code>pre_next:[B*S,4]</code>。</p>
 <h2 id="mhc系数生成汇聚与残差融合">3. mHC：系数生成、汇聚与残差融合</h2>
+<p>mHC 将四路残差与一个子层连接起来：<code>pre</code> 将四路汇聚成该子层的一路输入；<code>post</code> 控制子层输出写入各路的强度；<code>comb</code> 重新混合保留的四路残差。系数由输入动态生成，投影、scale 和 base 才是可学习参数。Attention 和 MoE 各有一套独立的系数生成参数。mHC 对本次 <code>B*S</code> 个 token 独立运算，历史总长 <code>S_his</code> 不改变其行数。</p>
+<p>本文采用 Single-Pass 时序：当前子层用已准备好的 <code>pre_cur</code> 做汇聚；当前生成器产生的 <code>pre_next</code> 用于下一个子层，而 <code>post</code> 和 <code>comb</code> 用于当前子层出口。下文先解释三类系数的数学计算，3.5 再列出完整使用位置。</p>
 <h3 id="系数生成前半段四路-x-raw-mixes-m">3.1 系数生成前半段：四路 X → raw mixes M</h3>
 <p><img src="assets/02_mhc_mixes_raw.png" alt="图 2：四路残差展平、RMS 缩放与联合投影，产生 24 个 raw mixes" /></p>
 <p><em>图 2 · 每个 token 的四路共 20480 个元素参与一个归一化统计，再投影成 24 个 raw 值。公式中的投影仍然读取展平后的 X，不能只把 r 作为输入。</em></p>
@@ -119,6 +132,7 @@ r_t=\left(\frac{1}{20480}\sum_{d=0}^{20479}X_{f,t,d}^2+\epsilon_{\mathrm{norm}}\
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>M</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mi>f</mi></msub><msubsup><mi>W</mi><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mi>T</mi></msubsup><mo stretchy="true" form="postfix">)</mo></mrow><mo>⊙</mo><mi>r</mi></mrow><annotation encoding="application/x-tex">
 M=(X_fW_{\mathrm{HC}}^T)\odot r
 </annotation></semantics></math></p>
+<p><code>r</code> 对每个 token 是一个标量。在精确算术下，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mi>f</mi></msub><mo>⊙</mo><mi>r</mi><mo stretchy="true" form="postfix">)</mo></mrow><msubsup><mi>W</mi><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mi>T</mi></msubsup></mrow><annotation encoding="application/x-tex">(X_f\odot r)W_{\mathrm{HC}}^T</annotation></semantics></math> 与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mi>f</mi></msub><msubsup><mi>W</mi><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mi>T</mi></msubsup><mo stretchy="true" form="postfix">)</mo></mrow><mo>⊙</mo><mi>r</mi></mrow><annotation encoding="application/x-tex">(X_fW_{\mathrm{HC}}^T)\odot r</annotation></semantics></math> 相等，因此可以将其理解为对四路展平输入做 RMS 缩放后再投影。参考代码先完成投影，再沿 24 维广播乘以 <code>r</code>；浮点运算顺序可能带来舍入差异。</p>
 <table>
 <thead>
 <tr class="header">
@@ -154,7 +168,7 @@ M=(X_fW_{\mathrm{HC}}^T)\odot r
 <h3 id="系数生成后半段m-pre-post-comb">3.2 系数生成后半段：M → pre / post / comb</h3>
 <p><img src="assets/03_mhc_coefficient_generation.png" alt="图 3：raw mixes 经缩放、偏置和非线性变成 pre、post 与 comb" /></p>
 <p><em>图 3 · <code>hc_scale</code> 的三个标量分别作用于三组 raw mixes；<code>hc_base</code> 按 4＋4＋16 拆分。每个 token 最终获得两个 4 维向量和一个 4×4 矩阵。</em></p>
-<p>定义可学习参数：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>s</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>s</mi><mn>0</mn></msub><mo>,</mo><msub><mi>s</mi><mn>1</mn></msub><mo>,</mo><msub><mi>s</mi><mn>2</mn></msub><mo stretchy="true" form="postfix">]</mo></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>3</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">s=[s_0,s_1,s_2]:[3]</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{pre}}:[4]</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{post}}:[4]</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>16</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{comb}}:[16]</annotation></semantics></math>。计算：</p>
+<p>定义可学习参数：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>s</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>s</mi><mn>0</mn></msub><mo>,</mo><msub><mi>s</mi><mn>1</mn></msub><mo>,</mo><msub><mi>s</mi><mn>2</mn></msub><mo stretchy="true" form="postfix">]</mo></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>3</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">s=[s_0,s_1,s_2]:[3]</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{pre}}:[4]</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{post}}:[4]</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>16</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{comb}}:[16]</annotation></semantics></math>。这些参数对所有 token 共用，沿 token 维广播。本节生成的 <code>pre</code> 即供下一个子层使用的 <code>pre_next</code>。计算：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi><mi>r</mi><mi>e</mi><mo>=</mo><mi>σ</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>s</mi><mn>0</mn></msub><msub><mi>M</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></msub><mo>+</mo><msub><mi>b</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub></mrow><annotation encoding="application/x-tex">
 pre=\sigma(s_0M_{\mathrm{pre}}+b_{\mathrm{pre}})+\epsilon_{\mathrm{hc}}
 </annotation></semantics></math></p>
@@ -165,6 +179,7 @@ post=2\sigma(s_1M_{\mathrm{post}}+b_{\mathrm{post}})
 C_0=\operatorname{reshape}_{4\times4}(s_2M_{\mathrm{comb}}+b_{\mathrm{comb}})
 </annotation></semantics></math></p>
 <p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>σ</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>x</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>1</mn><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>x</mi></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\sigma(x)=1/(1+e^{-x})</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub><mo>=</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\epsilon_{\mathrm{hc}}=10^{-6}</annotation></semantics></math>。最终 <code>pre</code>、<code>post</code> 均为 <code>[B*S,4]</code>；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mn>0</mn></msub><annotation encoding="application/x-tex">C_0</annotation></semantics></math> 为 <code>[B*S,4,4]</code>，尚不是最终 <code>comb</code>。</p>
+<p>对每个 token，将 16 个 comb raw 值按顺序重排为 4×4 矩阵：第 <code>4*i+j</code> 个值对应输入流 i 到输出流 j。行 Softmax 沿输出流 j 进行；行归一化固定 i，列归一化固定 j。以下计算都在每个 token 的 4×4 矩阵内独立进行。</p>
 <p><strong>comb 的 20 轮究竟怎么算？</strong> 对每个 token 的 4×4 矩阵，定义：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>RowNorm</mo><mi>ϵ</mi></msub><msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>A</mi><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mfrac><msub><mi>A</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mrow><munder><mo>∑</mo><mi>k</mi></munder><msub><mi>A</mi><mrow><mi>i</mi><mi>k</mi></mrow></msub><mo>+</mo><mi>ϵ</mi></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msub><mo>ColNorm</mo><mi>ϵ</mi></msub><msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>A</mi><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mfrac><msub><mi>A</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mrow><munder><mo>∑</mo><mi>k</mi></munder><msub><mi>A</mi><mrow><mi>k</mi><mi>j</mi></mrow></msub><mo>+</mo><mi>ϵ</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">
 \operatorname{RowNorm}_{\epsilon}(A)_{ij}=\frac{A_{ij}}{\sum_k A_{ik}+\epsilon},\qquad
@@ -176,16 +191,17 @@ A^{(0)}=\operatorname{Softmax}_{\mathrm{row}}(C_0)+\epsilon_{\mathrm{hc}},\qquad
 C^{(0)}=\operatorname{ColNorm}_{\epsilon_{\mathrm{hc}}}(A^{(0)})
 </annotation></semantics></math></p>
 <p>再重复 19 次：</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>C</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo>=</mo><msub><mo>ColNorm</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub></msub><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mo>RowNorm</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub></msub><mrow><mo stretchy="true" form="prefix">(</mo><msup><mi>C</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="1.0em"></mspace><mi>t</mi><mo>=</mo><mn>1</mn><mo>,</mo><mi>…</mi><mo>,</mo><mn>19</mn></mrow><annotation encoding="application/x-tex">
-C^{(t)}=\operatorname{ColNorm}_{\epsilon_{\mathrm{hc}}}\!\left(\operatorname{RowNorm}_{\epsilon_{\mathrm{hc}}}(C^{(t-1)})\right),\quad t=1,\ldots,19
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>C</mi><mrow><mo stretchy="true" form="prefix">(</mo><mo>ℓ</mo><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo>=</mo><msub><mo>ColNorm</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub></msub><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mo>RowNorm</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub></msub><mrow><mo stretchy="true" form="prefix">(</mo><msup><mi>C</mi><mrow><mo stretchy="true" form="prefix">(</mo><mo>ℓ</mo><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="1.0em"></mspace><mo>ℓ</mo><mo>=</mo><mn>1</mn><mo>,</mo><mi>…</mi><mo>,</mo><mn>19</mn></mrow><annotation encoding="application/x-tex">
+C^{(\ell)}=\operatorname{ColNorm}_{\epsilon_{\mathrm{hc}}}\!\left(\operatorname{RowNorm}_{\epsilon_{\mathrm{hc}}}(C^{(\ell-1)})\right),\quad \ell=1,\ldots,19
 </annotation></semantics></math></p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi><mi>o</mi><mi>m</mi><mi>b</mi><mo>=</mo><msup><mi>C</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>19</mn><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
 comb=C^{(19)}:[B*S,4,4]
 </annotation></semantics></math></p>
-<p>也就是 <strong>1 次行 Softmax＋20 次列归一化＋19 次普通行归一化</strong>。有限迭代和分母中的 epsilon 使行列和只是近似 1。这种约束限制残差混合的总系数，不等于保证所有残差向量不同，也不保证每个向量范数严格不变。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">核查：<code>hc_split_sinkhorn</code></a></p>
+<p>也就是 <strong>1 次行 Softmax＋20 次列归一化＋19 次普通行归一化</strong>。有限迭代和分母中的 epsilon 使行列和只是近似 1。对固定输出流 j，comb 的一列使旧四路形成近似凸组合；<code>hc_post</code> 还额外加入 <code>post_j*Y</code>，因此不能由 comb 的约束推断最终输出幅度或范数严格不变。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">核查：<code>hc_split_sinkhorn</code></a></p>
 <blockquote>
-<p>图 3 待修订：底部公式的括号容易把 epsilon 画成 Softmax 的输入；正确位置是 <strong>行 Softmax 之后加 epsilon，再列归一化</strong>。原图保留，以上公式为准。图中的 <code>Sinkhorn^19</code> 表示 19 次“行归一化→列归一化”，不是再执行 19 套各 20 轮的完整算法。</p>
+<p>图 3 阅读说明：底部公式的括号容易把 epsilon 画成 Softmax 的输入；正确位置是 <strong>行 Softmax 之后加 epsilon，再列归一化</strong>。此处按以上公式理解。图中的 <code>Sinkhorn^19</code> 表示 19 次“行归一化→列归一化”，不是再执行 19 套各 20 轮的完整算法。</p>
 </blockquote>
+<p><code>pre</code> 的每项在理想数学区间 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub><mo>,</mo><mn>1</mn><mo>+</mo><msub><mi>ϵ</mi><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(\epsilon_{\mathrm{hc}},1+\epsilon_{\mathrm{hc}})</annotation></semantics></math> 内，<code>post</code> 的每项在 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo>,</mo><mn>2</mn><mo stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(0,2)</annotation></semantics></math> 内；它们都不强制四项之和为 1，因此不是四路 Softmax 概率。有限精度 sigmoid 可能舍入至区间端点。<code>comb</code> 为正值矩阵，经迭代使行列和接近 1。</p>
 <p>一套生成器的逻辑参数量如下，Attention 与 MoE 各有独立的一套：</p>
 <table>
 <thead>
@@ -245,7 +261,7 @@ X&#39;_{t,j,d}=post_{t,j}Y_{t,d}+\sum_{i=0}^{3}comb_{t,i,j}X_{t,i,d}
 </annotation></semantics></math></p>
 <p>输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mi>′</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X&#39;:[B*S,4,5120]</annotation></semantics></math>。第一项把同一个子层输出按不同强度写到四路；第二项把旧四路重新组合。两项都不改变 hidden 维度。</p>
 <blockquote>
-<p>图 5 待修订：右半边应固定输出流 j，并遍历四个输入流 i。输入必须包含全部 X₀～X₃；<code>comb[:,:,j]</code> 为 <code>[B*S,4]</code>，<code>post[:,j]</code> 广播时为 <code>[B*S,1]</code>，而不是图中标出的宽度 4。四个加权残差项与一个加权 Y 相加，才得到单路 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><msub><mi>′</mi><mi>j</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X&#39;_j:[B*S,5120]</annotation></semantics></math>。</p>
+<p>图 5 阅读说明：右半边应固定输出流 j，并遍历四个输入流 i。输入必须包含全部 X₀～X₃；<code>comb[:,:,j]</code> 为 <code>[B*S,4]</code>，<code>post[:,j]</code> 广播时为 <code>[B*S,1]</code>，而不是图中标出的宽度 4。四个加权残差项与一个加权 Y 相加，才得到单路 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><msub><mi>′</mi><mi>j</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X&#39;_j:[B*S,5120]</annotation></semantics></math>。</p>
 </blockquote>
 <h3 id="single-pass提前的是下一个子层的-pre">3.5 Single-Pass：提前的是下一个子层的 pre</h3>
 <p>这三步的<strong>功能关系</strong>与<strong>系数使用时序</strong>要分开。当前四路 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math> 可同时作为两条路径的输入：一条拿已经准备好的 <code>pre_cur</code> 做汇聚；另一条产生 <code>pre_next</code>、当前 <code>post</code> 和当前 <code>comb</code>。它们只是数据依赖上允许重叠，不等于 Python 参考代码必然并发执行。</p>
@@ -277,7 +293,6 @@ X&#39;_{t,j,d}=post_{t,j}Y_{t,d}+\sum_{i=0}^{3}comb_{t,i,j}X_{t,i,d}
 U_{t,d}=\gamma_d Z_{t,d}\left(\frac{1}{5120}\sum_{k=0}^{5119}Z_{t,k}^2+10^{-20}\right)^{-1/2}
 </annotation></semantics></math></p>
 <p>输入输出都是 <code>[B*S,5120]</code>。<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\gamma:[5120]</annotation></semantics></math> 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 <strong>10,240</strong> 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>RMSNorm</code></a></p>
-<p><em>配图状态：RMSNorm 内部图待绘制；当前以公式说明。</em></p>
 <h2 id="局部-attention-swa">5. 局部 Attention / SWA</h2>
 <h3 id="从单路输入生成-q-与共享-kv">5.1 从单路输入生成 Q 与共享 KV</h3>
 <p>以下 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[B*S,5120]</annotation></semantics></math> 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：</p>
@@ -373,7 +388,7 @@ O_{b,h}=P_{b,h}C_b
 [B*S,64,512]\to[B*S,8,4096]\to[B*S,8,1024]\to[B*S,8192]\to[B*S,5120]
 </annotation></semantics></math></p>
 <p>每组 8 个头；第一组权重整体为 <code>[8,1024,4096]</code>，各组独立。第二级权重为 <code>[5120,8192]</code>，合并各组信息。两级之间没有额外非线性。这得到 Attention 的单路输出 Y，再交给 mHC 融合。</p>
-<p><em>配图状态：SWA 内部图待绘制；以上只描述数学对象，不宣称实现分配完整分数矩阵。</em></p>
+<p>以上描述数学对象，不表示实现会分配完整分数矩阵。</p>
 <h2 id="moe-前馈计算">6. MoE 前馈计算</h2>
 <h3 id="选择-6-个路由专家">6.1 选择 6 个路由专家</h3>
 <p>MoE 输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[B*S,5120]</annotation></semantics></math>。路由投影权重 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>R</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_R:[384,5120]</annotation></semantics></math>，本配置温度为 1：</p>
@@ -396,7 +411,7 @@ F_e(U)=\left[\operatorname{SiLU}(\min(UW_{1,e}^T,10))\odot\operatorname{clip}(UW
 Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 </annotation></semantics></math></p>
 <p>每个 token 的 6 个路由专家输出可记作 <code>[B*S,6,5120]</code>，沿 6 求和得到 <code>[B*S,5120]</code>，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>MoE</code></a></p>
-<p><em>配图状态：MoE 内部图待绘制。这里定义数学函数，不表示真的对每个 token 计算全部 384 个专家。</em></p>
+<p>这里定义数学函数，不表示实际对每个 token 计算全部 384 个专家。</p>
 <h2 id="本层参数与状态汇总">7. 本层参数与状态汇总</h2>
 <p>下表按前述逻辑维度求积，不含 embedding、输出头、量化 scale 和运行时系数，也不把 KV cache 算成参数：</p>
 <table>
@@ -434,14 +449,13 @@ Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 </tbody>
 </table>
 <p>推导检查：单专家参数为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>3</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2304</mn><mo>=</mo><mn>35</mn><mo>,</mo><mn>389</mn><mo>,</mo><mn>440</mn></mrow><annotation encoding="application/x-tex">3\times5120\times2304=35,389,440</annotation></semantics></math>；MoE 为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>385</mn><mo>×</mo><mn>35</mn><mo>,</mo><mn>389</mn><mo>,</mo><mn>440</mn><mo>+</mo><mn>384</mn><mo>×</mo><mn>5120</mn><mo>+</mo><mn>2</mn><mo>×</mo><mn>384</mn></mrow><annotation encoding="application/x-tex">385\times35,389,440+384\times5120+2\times384</annotation></semantics></math>。每 token 只激活 6 个路由专家和共享专家，不能用总参数量直接代替当次计算量。</p>
-<p>本层对后续层输出四路残差 <code>[B*S,4,5120]</code>，以及给下一层 Attention 的 <code>pre:[B*S,4]</code>；它自己的局部 KV 状态逻辑容量为 <code>[B,128,512]</code>。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。</p>
-<h2 id="来源审核与后续">8. 来源、审核与后续</h2>
-<p>本稿整理自本系列此前的讨论，模型名限定为 <strong>DeepSeek-V4.1-Flash</strong>。以下是此前分析使用的上游资料；此次发布工程不等同于重新核实全部模型事实：</p>
+<p>本层对后续层输出四路残差 <code>[B*S,4,5120]</code>，以及给下一层 Attention 的 <code>pre_next:[B*S,4]</code>；它自己的局部 KV 状态逻辑容量为 <code>[B,128,512]</code>。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。</p>
+<h2 id="资料来源与版本说明">8. 资料来源与版本说明</h2>
+<p>本文分析对象为 <strong>DeepSeek-V4.1-Flash</strong>，数学关系与维度依据以下上游资料：</p>
 <ul>
 <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json">模型配置</a></li>
 <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">模型前向实现</a>：RMSNorm、Attention、Gate、Expert、MoE、Block。</li>
 <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">算子数学细节</a>：hc_split_sinkhorn、sparse_attn。</li>
 </ul>
-<p>元数据查询返回候选 revision <code>2cba9e42aa026125f3ed06c6d98c1db82f7ca027</code>；此前固定 revision 的读取失败，<strong>尚不能将以上 main 内容宣称为已锁定到该提交</strong>。复现锁定属于发布前待办。</p>
-<p>后续先处理图 3、图 5 的标注歧义，再补 RMSNorm、SWA 与 MoE 配图；未经讨论的其他层不在本篇推断。本篇作为持续修订的技术笔记；未锁定上游版本及配图歧义均保留明确说明。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-03<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<p>当前引用使用上游 <code>main</code> 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。本轮文字核查集中于概述与 mHC，不构成对 SWA、MoE 全部细节的重新验证。图 3 与图 5 的标注按相邻阅读说明理解。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-04<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
