@@ -1,0 +1,19 @@
+site_name: 图解技术笔记
+site_url: https://absurdmirror.github.io/myBlog/
+repo_url: https://github.com/AbsurdMirror/myBlog
+repo_name: AbsurdMirror/myBlog
+docs_dir: .build/docs
+site_dir: site
+use_directory_urls: false
+theme:
+  name: null
+  custom_dir: theme
+hooks:
+  - scripts/site_hook.py
+plugins: []
+markdown_extensions:
+  - tables
+  - fenced_code
+nav:
+  - 首页: index.md
+  - 旧文归档: legacy/index.md

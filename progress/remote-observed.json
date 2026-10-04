@@ -1,0 +1,29 @@
+{
+  "observed_at_utc": "2026-10-03T23:38:21.522132+00:00",
+  "evidence": "Read-only GitHub connector checks during handoff packaging; no remote writes in this operation.",
+  "repository": "AbsurdMirror/myBlog",
+  "branches": {
+    "backup/hexo-before-rebuild-20261003": "439738a6b8ba88ab7a6b4d6c1df8ba4a267c940d",
+    "gh-pages": "439738a6b8ba88ab7a6b4d6c1df8ba4a267c940d",
+    "main": "9b2c7202a98d0d4238b0da986c859bbd01cb67ab",
+    "work/deepseek-v41-layer0": "efcc3d3717832a605f2e0039bcfa88b238f9f96f"
+  },
+  "pr": {
+    "number": 1,
+    "state": "open",
+    "draft": true,
+    "merged": false,
+    "base": "main",
+    "head": "work/deepseek-v41-layer0"
+  },
+  "remote_assets": [
+    "figures.json"
+  ],
+  "original_pngs_committed": false,
+  "new_pages_deployment_verified": false,
+  "endpoints": [
+    "https://api.github.com/repos/AbsurdMirror/myBlog/branches?per_page=100",
+    "https://api.github.com/repos/AbsurdMirror/myBlog/pulls/1",
+    "https://api.github.com/repos/AbsurdMirror/myBlog/contents/docs/models/deepseek-v4.1-flash/assets?ref=work%2Fdeepseek-v41-layer0"
+  ]
+}

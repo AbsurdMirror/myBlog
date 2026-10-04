@@ -1,0 +1,15 @@
+{
+  "repository": "AbsurdMirror/myBlog",
+  "source_branch": "work/deepseek-v41-layer0",
+  "expected_source_head": "efcc3d3717832a605f2e0039bcfa88b238f9f96f",
+  "expected_main_head": "9b2c7202a98d0d4238b0da986c859bbd01cb67ab",
+  "expected_pages_head": "439738a6b8ba88ab7a6b4d6c1df8ba4a267c940d",
+  "remove_from_release": [
+    ".github/workflows/asset-transfer.yml",
+    "scripts/fixtures/binary-upload-probe.png"
+  ],
+  "preserve": [
+    "archive/hexo-site/"
+  ],
+  "remote_publication_completed": false
+}
