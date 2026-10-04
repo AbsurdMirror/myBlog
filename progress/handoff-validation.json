@@ -1,0 +1,70 @@
+{
+  "checked_at_utc": "2026-10-03T23:39:40.579188+00:00",
+  "scope": "packaged_local_files_only",
+  "remote_mutations_in_this_turn": false,
+  "checks": [
+    {
+      "command": "python scripts/check.py --published-only",
+      "exit_code": 0,
+      "stdout": "PASS: 4 pages, relative resources, original hashes, arithmetic (published).\n",
+      "stderr": ""
+    },
+    {
+      "command": "python scripts/check_site.py",
+      "exit_code": 0,
+      "stdout": "PASS: 4 pages, local URLs and anchors, five SHA256-identical diagrams; 75 MathML nodes\n",
+      "stderr": ""
+    },
+    {
+      "command": "python scripts/publish_remote.py",
+      "exit_code": 0,
+      "stdout": "PASS: 4 pages, relative resources, original hashes, arithmetic (published).\nPASS: 4 pages, local URLs and anchors, five SHA256-identical diagrams; 75 MathML nodes\nReady: 39 source files; five original PNGs; full static site\nDRY RUN: no repository or Pages changes performed\n",
+      "stderr": ""
+    }
+  ],
+  "original_figures": [
+    {
+      "file": "01_layer0_overview.png",
+      "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4",
+      "bytes": 1372471,
+      "valid_png": true,
+      "site_copy_identical": true
+    },
+    {
+      "file": "02_mhc_mixes_raw.png",
+      "sha256": "389a9cba4f46d3629d41987f7ef573a72326b3ae4bdcc3fc528e2d5b59927caf",
+      "bytes": 1883417,
+      "valid_png": true,
+      "site_copy_identical": true
+    },
+    {
+      "file": "03_mhc_coefficient_generation.png",
+      "sha256": "6bb128eedd969ca3c0fd384fcc0ed448f3bc4b10e3e682f67dc802cd56b85e7f",
+      "bytes": 2862228,
+      "valid_png": true,
+      "site_copy_identical": true
+    },
+    {
+      "file": "04_mhc_hc_pre.png",
+      "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5",
+      "bytes": 1768649,
+      "valid_png": true,
+      "site_copy_identical": true
+    },
+    {
+      "file": "05_mhc_hc_post.png",
+      "sha256": "457a6e636beffc5d3cd6cccb8d05b62b10c2597598d9e72c26f94e7bf12c0c84",
+      "bytes": 2069709,
+      "valid_png": true,
+      "site_copy_identical": true
+    }
+  ],
+  "browser_recheck": {
+    "completed": false,
+    "reason": "Installed Chromium rejected both file and localhost navigation: net::ERR_BLOCKED_BY_ADMINISTRATOR. No browser policy was modified. Prior browser checks are historical, not a new online verification."
+  },
+  "archive_present_in_local_package": false,
+  "git_history_present_in_local_package": false,
+  "technical_article_unchanged_from_incoming_package": true,
+  "new_pages_deployment_verified": false
+}

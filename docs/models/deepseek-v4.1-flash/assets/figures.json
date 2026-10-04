@@ -10,7 +10,9 @@
       "height": 1106,
       "selection": "user-selected",
       "semantic_review": "needs-annotation-review",
-      "notes": ["第0层顶部pre为固定[1,0,0,0]；comb的16按每token元素数读。"]
+      "notes": [
+        "第0层顶部pre为固定[1,0,0,0]；comb的16按每token元素数读。"
+      ]
     },
     {
       "id": "layer0-02",
@@ -21,7 +23,9 @@
       "height": 1448,
       "selection": "user-selected",
       "semantic_review": "needs-annotation-review",
-      "notes": ["投影还读取Xf，不能把r视为唯一输入；保留原图不改线。"]
+      "notes": [
+        "投影还读取Xf，不能把r视为唯一输入；保留原图不改线。"
+      ]
     },
     {
       "id": "layer0-03",
@@ -32,7 +36,9 @@
       "height": 1536,
       "selection": "user-selected",
       "semantic_review": "needs-annotation-review",
-      "notes": ["底部epsilon括号容易误读；应在row Softmax之后相加。"]
+      "notes": [
+        "底部epsilon括号容易误读；应在row Softmax之后相加。"
+      ]
     },
     {
       "id": "layer0-04",
@@ -54,7 +60,9 @@
       "height": 1086,
       "selection": "user-selected",
       "semantic_review": "needs-annotation-review",
-      "notes": ["右侧固定输出j应读取全部4路Xi；post_j广播形状为[B*S,1]。"]
+      "notes": [
+        "右侧固定输出j应读取全部4路Xi；post_j广播形状为[B*S,1]。"
+      ]
     }
   ]
 }

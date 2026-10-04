@@ -2,3 +2,4 @@
 
 @media(max-width:900px){.table-wrap::before{content:"表格可左右滑动";display:block;color:#7b8798;font-size:10px;padding:2px 0 7px}.doc math{max-width:none}}
 .site-links{font-size:11px;margin:12px 0 20px}.site-links summary{cursor:pointer;color:var(--muted)}
+.site-links>a,.mobile-nav>a{display:block;line-height:1.6;padding:5px 0}.mobile-nav{display:none}.doc a:focus-visible{outline:2px solid #245db0;outline-offset:3px}@media(max-width:900px){.mobile-nav{display:block;margin:0 0 22px;padding:10px 14px;border:1px solid var(--rule);border-radius:8px;font-size:13px}.mobile-nav summary{cursor:pointer;font-weight:600}}

@@ -1,0 +1,71 @@
+{
+  "local_only": true,
+  "mode": "embedded-same-built-html",
+  "new_site_online": false,
+  "results": [
+    {
+      "width": 1440,
+      "bodyWidth": 1440,
+      "images": [
+        {
+          "w": 1422,
+          "h": 1106
+        },
+        {
+          "w": 1086,
+          "h": 1448
+        },
+        {
+          "w": 1024,
+          "h": 1536
+        },
+        {
+          "w": 1448,
+          "h": 1086
+        },
+        {
+          "w": 1448,
+          "h": 1086
+        }
+      ],
+      "math": 75,
+      "headings": 19,
+      "profile": "desktop",
+      "js_errors": [],
+      "viewer_100percent": true,
+      "viewer_close": true
+    },
+    {
+      "width": 390,
+      "bodyWidth": 390,
+      "images": [
+        {
+          "w": 1422,
+          "h": 1106
+        },
+        {
+          "w": 1086,
+          "h": 1448
+        },
+        {
+          "w": 1024,
+          "h": 1536
+        },
+        {
+          "w": 1448,
+          "h": 1086
+        },
+        {
+          "w": 1448,
+          "h": 1086
+        }
+      ],
+      "math": 75,
+      "headings": 19,
+      "profile": "mobile",
+      "js_errors": [],
+      "viewer_100percent": true,
+      "viewer_close": true
+    }
+  ]
+}

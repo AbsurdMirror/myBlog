@@ -1,37 +1,56 @@
-# 图解技术笔记
+# 图解技术笔记 · 本地交接工作副本
 
-Markdown＋原始配图是唯一内容源。模型系列先建立数学计算与 shape，再讨论执行实现。
+Markdown 和原始配图是唯一正文源；网页由它们构建。当前任务是在已有仓库 `AbsurdMirror/myBlog` 上完成正式图片入库、正文合并与 GitHub Pages 发布，不是重新设计网站。
 
-## 维护与分支
+**先读 [交接说明](progress/handoff.md)。**
 
-- `main`：确认后的源码；`work/deepseek-v41-layer0`：当前样章草稿。
-- `backup/hexo-before-rebuild-20261003`：旧站备份；`gh-pages`：旧线上站点，未改动。
-- `archive/hexo-site/` 直接保留重构前整棵 Git tree，不重写历史。
+## 此压缩包是什么
 
-[写作规则](AUTHORING.md) · [样章](docs/models/deepseek-v4.1-flash/02-layer0.md) · [进度](progress/deepseek-v4.1-flash.md)
+这是最新本地工作文件快照，含正文、五张原图、构建/发布脚本、站点样式和已生成的 `site/`。
 
-## 预览
+- **没有 `.git/`**，不能把解压目录当作已经关联远端、可直接 push 的 Git clone。
+- **不包含旧站 `archive/hexo-site/`**；它已保存在远端源码分支。请在新环境 clone 现有工作分支后覆盖本包文件，保留原 `.git/`、旧站归档和历史。不要 `git init` 后强推，也不要全目录镜像删除。
+- `site/` 为本地生成物，打包仅方便预览与部署，不应提交到 `main`。
+- 当前有本地文件尚未提交。`status: published` 是构建白名单标记，不代表页面已经上线。
 
-依赖 Python 3.11+、Pandoc 2.17+。常规站点另外安装 `requirements.txt` 中的 MkDocs。正文经 Pandoc 输出原生 MathML，无外部字体、公式 CDN 或图片图床。
+## 主要入口
+
+- [Layer 0 正文](docs/models/deepseek-v4.1-flash/02-layer0.md)
+- [模型系列入口](docs/models/deepseek-v4.1-flash/index.md)
+- [写作规范](AUTHORING.md)
+- [五图清单和 SHA256](docs/models/deepseek-v4.1-flash/assets/figures.json)
+- [本次读回的远端状态](progress/remote-observed.json)
+
+## 本地检查与构建
+
+需要 Python 3.11+、PyYAML、Pandoc。现有主构建路线无需安装 MkDocs。
 
 ```sh
-python scripts/check.py
-python scripts/preview.py --output .preview/layer0.html
-# 直接用浏览器打开 .preview/layer0.html，单文件包含原图
-python -m pip install -r requirements.txt
-python scripts/stage.py --preview
-mkdocs build --strict
-mkdocs serve
+python scripts/check.py --published-only
+python scripts/build_static.py
+python scripts/check_site.py
+python -m http.server 8000 --directory site
 ```
 
-`--preview` 收录草稿；不加该选项只拷贝 status=published 的页面及实际引用的资源到 .build/docs，草稿不进入发布物。静态站点和离线预览共用 CSS、查看器和 Pandoc 的正文渲染。
+浏览器访问 `http://localhost:8000/models/deepseek-v4.1-flash/02-layer0.html`。
 
-## 发布
+从远端 clone 并覆盖本包后，正式构建应使用：
 
-发布工作流仅允许 main 手动触发，并要求输入 PUBLISH；本轮不触发。需要先把 Pages Source 切换为 GitHub Actions，并完成用户确认与完整检查。当前默认分支仍是 gh-pages，尚未更改；新分支通过明确 URL 访问。
+```sh
+python scripts/build_static.py --require-legacy
+python scripts/check_site.py
+```
 
-## 图片入库状态
+`--require-legacy` 检查旧站快照是否存在；不要建一个空文件夹蒙混过关。可单独生成内嵌原图的 HTML：
 
-工作分支已有图清单及相对路径；五张原始 PNG 在当前交付的完整源码包与 HTML 内。当前 GitHub 连接没有接受本地图片文件的上传动作，远端 PNG 尚未完成。将源码包的 docs/models/deepseek-v4.1-flash/assets/ 五张 PNG 原样写入对应目录后运行校验；SHA256 必须与 figures.json 一致，不以缩略图或占位图替代。
+```sh
+python scripts/preview.py --output .preview/layer0.html
+```
 
-该仓库公开，工作分支不是私人草稿空间。禁止提交密钥、私人笔记或完整对话。
+## 发布与未完成事项
+
+`.github/workflows/publish.yml` 在 main 更新后构建和校验站点，提交至现有 gh-pages 分支并显式请求 Pages 构建。保留旧文章资源与发布分支历史；以实际 Pages 页面验收发布结果。
+
+`scripts/publish_remote.py` 是备选的直接 API 发布脚本。默认仅做本地 dry-run；显式 `--execute` 才写远端。它需要执行环境能联网并已有认证；不继承聊天连接器的凭据。执行前读脚本、刷新远端分支并核对 Pages 设置。脚本不是已验证成功的一键部署方案，细节见交接说明。
+
+旧站备份必须保留。五张原图不得重画或替换为缩略图。仓库公开，不提交令牌、个人笔记或整段聊天。

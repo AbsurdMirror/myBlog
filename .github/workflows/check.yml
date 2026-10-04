@@ -1,9 +1,9 @@
 name: Check documentation
 on:
-  push:
-    branches: [main, 'work/**']
   pull_request:
     branches: [main]
+  push:
+    branches: [work/deepseek-v41-layer0]
 permissions:
   contents: read
 jobs:
@@ -14,15 +14,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -r requirements.txt
+      - run: pip install PyYAML==6.0.2
       - run: sudo apt-get update && sudo apt-get install -y pandoc
       - run: python scripts/check.py
-      - run: python scripts/stage.py --preview
-      - run: mkdocs build --strict
-      - run: python scripts/preview.py --output .preview/layer0.html
+      - run: python scripts/build_static.py --preview --require-legacy
+      - run: python scripts/check_site.py
       - uses: actions/upload-artifact@v4
         with:
-          name: review-html
-          path: |
-            site/
-            .preview/layer0.html
+          name: rendered-documentation
+          path: site
+          retention-days: 14

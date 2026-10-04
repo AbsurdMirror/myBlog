@@ -27,7 +27,7 @@ def main():
             if not dest.is_relative_to(docs.resolve()) or not dest.exists(): errors.append('Broken local reference: '+rel+' -> '+clean)
             if args.published_only and clean.endswith('.md') and dest.exists():
                 if str(dest.relative_to(docs.resolve())) not in pages: errors.append('Published page links to unstaged page: '+clean)
-    if not args.published_only:
+    if True:
         for manifest in docs.rglob('figures.json'):
             for row in json.loads(manifest.read_text())['figures']:
                 path=manifest.parent/row['file']

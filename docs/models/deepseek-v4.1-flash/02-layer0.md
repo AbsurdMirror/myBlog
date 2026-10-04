@@ -1,7 +1,7 @@
 ---
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
-status: draft
+status: published
 updated: 2026-10-03
 order: 2
 ---
@@ -301,12 +301,12 @@ $$
 
 ## 8. 来源、审核与后续
 
-本稿于 **2026-10-03** 再次核对以下上游公开实现与配置，模型名限定为 **DeepSeek-V4.1-Flash**：
+本稿整理自本系列此前的讨论，模型名限定为 **DeepSeek-V4.1-Flash**。以下是此前分析使用的上游资料；此次发布工程不等同于重新核实全部模型事实：
 
 - [模型配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json)
 - [模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)：RMSNorm、Attention、Gate、Expert、MoE、Block。
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
-元数据查询返回候选 revision `2cba9e42aa026125f3ed06c6d98c1db82f7ca027`；本轮固定 revision 的读取失败，**尚不能将以上 main 内容宣称为已锁定到该提交**。复现锁定属于发布前待办。
+元数据查询返回候选 revision `2cba9e42aa026125f3ed06c6d98c1db82f7ca027`；此前固定 revision 的读取失败，**尚不能将以上 main 内容宣称为已锁定到该提交**。复现锁定属于发布前待办。
 
-后续先处理图 3、图 5 的标注歧义，再补 RMSNorm、SWA 与 MoE 配图；未经讨论的其他层不在本篇推断。数学内容与版式均处于草稿审核阶段。
+后续先处理图 3、图 5 的标注歧义，再补 RMSNorm、SWA 与 MoE 配图；未经讨论的其他层不在本篇推断。本篇作为持续修订的技术笔记；未锁定上游版本及配图歧义均保留明确说明。

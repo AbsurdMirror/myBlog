@@ -1,0 +1,29 @@
+{
+  "status": "locally_built_remote_not_updated",
+  "repository": "AbsurdMirror/myBlog",
+  "observed_remote_source_head": "efcc3d3717832a605f2e0039bcfa88b238f9f96f",
+  "observed_remote_main_head": "9b2c7202a98d0d4238b0da986c859bbd01cb67ab",
+  "observed_remote_pages_head": "439738a6b8ba88ab7a6b4d6c1df8ba4a267c940d",
+  "local_checks": {
+    "source_files": true,
+    "image_sha256": true,
+    "internal_links": true,
+    "html_mathml_count": 75,
+    "rendered_desktop_width": 1440,
+    "rendered_mobile_width": 390,
+    "whole_page_horizontal_overflow": false,
+    "viewer_zoom_close": true
+  },
+  "unperformed_remote_steps": [
+    "upload_original_pngs",
+    "merge_source",
+    "publish_site",
+    "verify_online_site"
+  ],
+  "actual_attempts": {
+    "native_git_clone": "fatal: unable to access https://github.com/AbsurdMirror/myBlog.git/: Could not resolve host: github.com",
+    "native_publisher": "No authenticated native GitHub context is present. No remote write attempted.",
+    "connector_write_operations": "No create_blob, create_tree, create_commit or update_ref callable action schema was provided this turn; this is not a finding about repository permissions.",
+    "formal_image_readback": "GET work/deepseek-v41-layer0 docs/models/deepseek-v4.1-flash/assets/01_layer0_overview.png returned 404"
+  }
+}
