@@ -18,7 +18,7 @@ Layer 0 由 Attention 和 MoE 两个串行子层组成，每个子层都通过 m
 - **子层计算**：单路输入经过 RMSNorm，再执行 Attention 或 MoE。
 - **出口融合**：子层输出与保留的原四路残差融合，恢复为四路，交给下一子层。
 
-四路整体为 `[B*S,4,5120]`，汇聚后的单路为 `[B*S,5120]`。
+四路整体为 `[BxS,4,5120]`，汇聚后的单路为 `[BxS,5120]`。
 
 混合系数生成分支读取各自子层的四路输入。生成的 **post、comb 用于当前出口，pre 用于下一子层入口**。Layer 0 初始四路来自同一份 embedding，首次 pre 为 `[1,0,0,0]`。
 
@@ -324,21 +324,21 @@ $$
 U_{t,d}=\gamma_d Z_{t,d}\left(\frac{1}{5120}\sum_{k=0}^{5119}Z_{t,k}^2+10^{-20}\right)^{-1/2}
 $$
 
-输入输出都是 `[B*S,5120]`。$\gamma:[5120]$ 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 **10,240** 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+输入输出都是 `[BxS,5120]`。$\gamma:[5120]$ 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 **10,240** 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ## 4. 局部 Attention / SWA
 
 ### 4.1 从单路输入生成 Q 与共享 KV
 
-以下 $U:[B*S,5120]$ 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：
+以下 $U:[BxS,5120]$ 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：
 
 | 步骤 | 权重 / 操作 | 输出 shape |
 |---|---|---|
-| Q 降维 | $W_{Qa}:[1280,5120]$ | `[B*S,1280]` |
-| Q 归一化 | 独立 RMSNorm，gamma 为 `[1280]` | `[B*S,1280]` |
-| Q 展开 | $W_{Qb}:[32768,1280]$，分成 64 头 | `[B*S,64,512]` |
-| KV 投影 | $W_{KV}:[512,5120]$ | `[B*S,512]` |
-| KV 归一化 | 独立 RMSNorm，gamma 为 `[512]` | `[B*S,512]` |
+| Q 降维 | $W_{Qa}:[1280,5120]$ | `[BxS,1280]` |
+| Q 归一化 | 独立 RMSNorm，gamma 为 `[1280]` | `[BxS,1280]` |
+| Q 展开 | $W_{Qb}:[32768,1280]$，分成 64 头 | `[BxS,64,512]` |
+| KV 投影 | $W_{KV}:[512,5120]$ | `[BxS,512]` |
+| KV 归一化 | 独立 RMSNorm，gamma 为 `[512]` | `[BxS,512]` |
 | 位置编码 | Q 每头、KV 的最后 64 维做 RoPE | shape 不变 |
 
 64 个 Query 头共用同一份表示 $C=K=V:[B,S,512]$。其余 448 维不旋转。第 0 层的局部支路采用基数 10000 的 RoPE。这里不展开 KV 量化与存储布局。[核查：`Attention`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
@@ -364,11 +364,11 @@ $$
 
 | 对象 | 展平 token 后的 shape |
 |---|---|
-| Q | `[B*S,64,512]` |
+| Q | `[BxS,64,512]` |
 | C=K=V | `[B,S,512]` |
-| E、L、P | `[B*S,64,S]` |
+| E、L、P | `[BxS,64,S]` |
 | mask | `[B,S,S]`，沿头维广播 |
-| O | `[B*S,64,512]` |
+| O | `[BxS,64,512]` |
 
 sink 只占用归一化分母，不提供内容；真实 token 的权重和不必为 1。最后一步按 `[S,512]` 的 C 排列写 **PC，不是 PCᵀ**。处理历史前缀时，完整数学分数最后一维改为 `S_his`，而不是提前截成窗口 128。[核查：`sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
 
@@ -377,7 +377,7 @@ sink 只占用归一化分母，不提供内容；真实 token 的权重和不�
 对 O 每头最后 64 维按当前 Query 位置做逆 RoPE，随后：
 
 $$
-[B*S,64,512]\to[B*S,8,4096]\to[B*S,8,1024]\to[B*S,8192]\to[B*S,5120]
+[BxS,64,512]\to[BxS,8,4096]\to[BxS,8,1024]\to[BxS,8192]\to[BxS,5120]
 $$
 
 每组 8 个头；第一组权重整体为 `[8,1024,4096]`，各组独立。第二级权重为 `[5120,8192]`，合并各组信息。两级之间没有额外非线性。这得到 Attention 的单路输出 Y，再交给 mHC 融合。
@@ -388,19 +388,19 @@ $$
 
 ### 5.1 选择 6 个路由专家
 
-MoE 输入 $U:[B*S,5120]$。路由投影权重 $W_R:[384,5120]$，本配置温度为 1：
+MoE 输入 $U:[BxS,5120]$。路由投影权重 $W_R:[384,5120]$，本配置温度为 1：
 
 $$
 R=\sqrt{\operatorname{Softplus}(UW_R^T)},\qquad I_t=\operatorname{TopKIndices}_{6}(R_t+b)
 $$
 
-$R:[B*S,384]$，$I:[B*S,6]$。修正量 $b:[384]$ 只改变选中哪些专家，融合权重仍取原始正数评分：
+$R:[BxS,384]$，$I:[BxS,6]$。修正量 $b:[384]$ 只改变选中哪些专家，融合权重仍取原始正数评分：
 
 $$
 g_{t,k}=1.5\frac{R_{t,I_{t,k}}}{\sum_{\ell=0}^{5}R_{t,I_{t,\ell}}+10^{-20}}
 $$
 
-$g:[B*S,6]$，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 `bias_vl`；本文的文本路径使用 `bias`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+$g:[BxS,6]$，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 `bias_vl`；本文的文本路径使用 `bias`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ### 5.2 每个专家的带截断 SwiGLU
 
@@ -410,7 +410,7 @@ $$
 F_e(U)=\left[\operatorname{SiLU}(\min(UW_{1,e}^T,10))\odot\operatorname{clip}(UW_{3,e}^T,-10,10)\right]W_{2,e}^T
 $$
 
-两条支路分别产生 `[B*S,2304]`；逐元素相乘后再投影回 `[B*S,5120]`。Gate 支路只截断上界，Up 支路同时截断上下界。[核查：`Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+两条支路分别产生 `[BxS,2304]`；逐元素相乘后再投影回 `[BxS,5120]`。Gate 支路只截断上界，Up 支路同时截断上下界。[核查：`Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ### 5.3 合并路由专家与共享专家
 
@@ -418,7 +418,7 @@ $$
 Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 $$
 
-每个 token 的 6 个路由专家输出可记作 `[B*S,6,5120]`，沿 6 求和得到 `[B*S,5120]`，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。[核查：`MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+每个 token 的 6 个路由专家输出可记作 `[BxS,6,5120]`，沿 6 求和得到 `[BxS,5120]`，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。[核查：`MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 这里定义数学函数，不表示实际对每个 token 计算全部 384 个专家。
 
@@ -437,7 +437,7 @@ $$
 
 推导检查：单专家参数为 $3\times5120\times2304=35,389,440$；MoE 为 $385\times35,389,440+384\times5120+2\times384$。每 token 只激活 6 个路由专家和共享专家，不能用总参数量直接代替当次计算量。
 
-本层对后续层输出四路残差 `[B*S,4,5120]`，以及给下一层 Attention 的 `pre_next:[B*S,4]`；它自己的局部 KV 状态逻辑容量为 `[B,128,512]`。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。
+本层对后续层输出四路残差 `[BxS,4,5120]`，以及给下一层 Attention 的 `pre_next:[BxS,4]`；它自己的局部 KV 状态逻辑容量为 `[B,128,512]`。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。
 
 ## 7. 资料来源与版本说明
 
