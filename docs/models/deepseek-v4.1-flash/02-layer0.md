@@ -192,7 +192,7 @@ $$
 
 #### 参数量
 
-一套 mHC 的可学习参数包括联合投影矩阵 $W$、偏置 $\mathrm{hc\_base}$ 和缩放系数 $\mathrm{hc\_scale}$。
+一套 mHC 的可学习参数包括联合投影矩阵 $W$、偏置 $\mathrm{hc\_base}$ 和缩放系数 $\mathrm{hc\_scale}$。参数量中的 K、M 分别表示 $10^3$、$10^6$ 个参数。
 
 | 参数 | 维度 | 参数量 |
 |---|---|---:|
@@ -273,14 +273,14 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983094（983.09
 
 ##### Global Memory 汇总表
 
-本节 K、M 均按 1024 进制表示：$K=1024\,\mathrm{Byte}$，$M=1024^2\,\mathrm{Byte}$。
+空间占用使用二进制单位：$1\,\mathrm{KiB}=1024\,\mathrm{Byte}$，$1\,\mathrm{MiB}=1024^2\,\mathrm{Byte}$。
 
 | 类别 | 包含 Tensor | Global Memory Size |
 |---|---|---:|
-| Parameter | $W,\ \mathrm{hc\_scale},\ \mathrm{hc\_base}$ | $\approx1.88M$ |
-| Input | $X,\ \mathrm{pre}_{\mathrm{in}}$ | $40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
-| Output | $X',\ \mathrm{pre}_{\mathrm{out}}$ | $40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
-| **Required Global Memory** | Parameter + Input + Output | **$1.88M+80K\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}$** |
+| Parameter | $W,\ \mathrm{hc\_scale},\ \mathrm{hc\_base}$ | $\approx1.88\,\mathrm{MiB}$ |
+| Input | $X,\ \mathrm{pre}_{\mathrm{in}}$ | $40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
+| Output | $X',\ \mathrm{pre}_{\mathrm{out}}$ | $40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
+| **Required Global Memory** | Parameter + Input + Output | **$\approx1.88\,\mathrm{MiB}+80\,\mathrm{KiB}\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}$** |
 
 Internal Activation：
 
@@ -296,22 +296,22 @@ $$
 \boxed{
 M_{\mathrm{mHC}}(B,S)
 \approx
-1.88M+80K\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}
+1.88\,\mathrm{MiB}+80\,\mathrm{KiB}\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}
 }
 $$
 
 其中：
 
 $$
-M_{\mathrm{param}}\approx1.88M
+M_{\mathrm{param}}\approx1.88\,\mathrm{MiB}
 $$
 
 $$
-M_{\mathrm{input}}=40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
+M_{\mathrm{input}}=40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
 $$
 
 $$
-M_{\mathrm{output}}=40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
+M_{\mathrm{output}}=40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
 $$
 
 形状与类型依据：[模型配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json)、[模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)、[系数生成核](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)。核查日期：2026-10-05。
@@ -448,5 +448,3 @@ $$
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
 当前引用使用上游 `main` 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。本轮文字核查集中于概述与 mHC，不构成对 SWA、MoE 全部细节的重新验证。图示的维度与公式以相邻正文为准。
-
-
