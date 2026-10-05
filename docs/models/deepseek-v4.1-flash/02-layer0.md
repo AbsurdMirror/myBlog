@@ -10,17 +10,21 @@ order: 2
 
 ## 1. Layer 0 总览
 
+本文分析 **DeepSeek-V4.1-Flash 的 Layer 0 文本前向路径**，张量形状按完整逻辑维度表示。
+
+$B$ 表示 batch，$S$ 表示本次处理的 token 数，$\mathrm{BxS}=B\times S$ 表示合并后的 token 维。Attention 仍按各自会话计算。
+
 ![图 1：Layer 0 总览](assets/01_layer0_overview.png)
 
-Layer 0 由 Attention 和 MoE 两个串行子层组成，每个子层都通过 mHC 与四路残差连接：
+Layer 0 先计算 Attention，再计算 MoE；两个子层各有独立的一套 mHC。初始四路来自同一份 embedding，整体形状为 `[BxS,4,5120]`，首次 pre 为 `[1,0,0,0]`。
+
+每个子层的流程为：
 
 - **入口汇聚**：四路残差汇成一路，同时由四路输入生成混合系数。
-- **子层计算**：单路输入经过 RMSNorm，再执行 Attention 或 MoE。
-- **出口融合**：子层输出与保留的原四路残差融合，恢复为四路，交给下一子层。
+- **子层计算**：单路输入 `[BxS,5120]` 经过 RMSNorm，再执行 Attention 或 MoE。
+- **出口融合**：子层输出与保留的原四路残差融合，恢复为 `[BxS,4,5120]`，交给下一子层。
 
-四路整体为 `[BxS,4,5120]`，汇聚后的单路为 `[BxS,5120]`。
-
-混合系数生成分支读取各自子层的四路输入。生成的 **post、comb 用于当前出口，pre 用于下一子层入口**。Layer 0 初始四路来自同一份 embedding，首次 pre 为 `[1,0,0,0]`。
+混合系数生成分支读取当前子层的四路输入。生成的 **post、comb 用于当前出口，pre 用于下一子层入口**：Attention 侧的 pre 交给本层 MoE，MoE 侧的 pre 交给下一层 Attention。
 
 ## 2. mHC
 
@@ -28,7 +32,9 @@ Layer 0 由 Attention 和 MoE 两个串行子层组成，每个子层都通过 m
 
 ![图 2：四路输入生成 raw mixes](assets/02_mhc_mixes_raw.png)
 
-四路输入经过展平、RMS 缩放与联合投影，生成混合系数的原始值：
+四路输入经过展平、RMS 缩放与联合投影，生成混合系数的原始值。以下 $t$ 为展平后的 token 索引，$d$ 为特征元素索引，$\odot$ 表示逐元素相乘；线性权重按 `[输出,输入]` 排列。
+
+计算分为三步：
 
 - **展平**：$X_0$～$X_3$ 沿 hidden 维拼接，每个 token 的 $4\times5120$ 个元素组成 $X$ $[\mathrm{BxS},20480]$。
 
@@ -56,13 +62,13 @@ $$
 M=[M_{\mathrm{pre}}\;M_{\mathrm{post}}\;M_{\mathrm{comb}}]
 $$
 
-图中投影同时读取 **$X$ 和 $r$**，并不是只对 $r$ 做投影。
+$X$ 提供投影内容，$r$ 按行广播，对投影结果逐行缩放。
 
 ### 2.2 生成 pre、post、comb
 
 ![图 3：生成 pre、post、comb](assets/03_mhc_coefficient_generation.png)
 
-三组 raw mixes 使用以下参数生成混合系数。$s$、$b$ 由训练学习，对所有 token 共用；固定常数由算法给定。
+$M$ 以及由它生成的 pre、post、comb 都是随输入变化的动态值。下面的 $s$、$b$ 是训练得到的模型参数，对所有 token 共用；固定常数由算法给定。
 
 | 对象 | 来源与含义 |
 |---|---|
@@ -122,7 +128,7 @@ $$
 C_0=M_{\mathrm{comb}}\cdot s_2+b_{\mathrm{comb}}
 $$
 
-将 $C_0$ 重排为 $[\mathrm{BxS},4,4]$。每个 token 的矩阵先做行 Softmax、逐项加 $c$，再做首次列归一化；随后执行 $19$ 次 Sinkhorn 迭代：
+将 $C_0$ 重排为 $[\mathrm{BxS},4,4]$。本配置 $\mathrm{hc\_sinkhorn\_iters}=20$：先做行 Softmax、逐项加 $c$ 和首次列归一化，再执行 $19$ 次 Sinkhorn 迭代，共完成 $20$ 次列归一化：
 
 $$
 \mathrm{comb}=
@@ -141,7 +147,7 @@ $$
 
 ![图 4：四路汇聚 hc_pre](assets/04_mhc_hc_pre.png)
 
-四路残差分别乘以对应的 $\mathrm{pre}$ 系数，再相加，得到单路输入 $Z$。
+本次使用的 $\mathrm{pre}$ 由上一子层生成；Layer 0 首次汇聚使用固定值 $[1,0,0,0]$。四路残差分别乘以对应系数，再相加，得到单路输入 $Z$。
 
 | 对象 | 维度与含义 |
 |---|---|
@@ -155,15 +161,13 @@ $$
 
 每个 token 的 $a_i$ 作用于对应残差流的全部 $5120$ 个元素；求和只沿四路进行，保留 token 与 hidden 维度。
 
-本次使用的 $\mathrm{pre}$ 由上一子层生成；Layer 0 首次汇聚使用固定值 $[1,0,0,0]$。
-
 ### 2.4 残差融合 hc_post
 
 ![图 5：残差融合 hc_post](assets/05_mhc_hc_post.png)
 
 左侧展示四路输出的整体融合，右侧展开单个输出流 $j$ 的计算，两侧表达的是同一个过程。
 
-输入为保留的四路残差 $X:[\mathrm{BxS},4,5120]$ 和子层输出 $Y:[\mathrm{BxS},5120]$，使用当前子层生成的 $\mathrm{comb}:[\mathrm{BxS},4,4]$ 与 $\mathrm{post}:[\mathrm{BxS},4]$。
+输入为保留的四路残差 $X:[\mathrm{BxS},4,5120]$ 和子层输出 $Y:[\mathrm{BxS},5120]$，使用当前子层生成的 $\mathrm{comb}:[\mathrm{BxS},4,4]$ 与 $\mathrm{post}:[\mathrm{BxS},4]$。以下 $i$、$j$ 分别表示旧、新残差流；$t$、$d$ 分别表示 token 与特征元素。
 
 - **旧残差混合**：每个输出流 $j$ 都接收旧四路的加权结果。$\mathrm{comb}_{t,i,j}$ 表示 token $t$ 的旧第 $i$ 路到新第 $j$ 路的系数。
 
@@ -186,13 +190,13 @@ X'=X_{\mathrm{post}}+Y_{\mathrm{post}},
 \qquad X':[\mathrm{BxS},4,5120]
 $$
 
-其中，$t$ 表示 token，$i$、$j$ 分别表示旧、新残差流，$d$ 表示 hidden 元素。
-
 ### 2.5 参数量、计算量与空间占用
+
+以下先按**一套 mHC**统计，再按 Attention、MoE 两套汇总参数量和计算量。参数量、计算量中的 K、M 分别表示 $10^3$、$10^6$；空间占用使用 Byte、KiB、MiB。
 
 #### 参数量
 
-一套 mHC 的可学习参数包括联合投影矩阵 $W$、偏置 $\mathrm{hc\_base}$ 和缩放系数 $\mathrm{hc\_scale}$。参数量中的 K、M 分别表示 $10^3$、$10^6$ 个参数。
+一套 mHC 的可学习参数包括联合投影矩阵 $W$、偏置 $\mathrm{hc\_base}$ 和缩放系数 $\mathrm{hc\_scale}$。四路汇聚和残差融合没有额外可学习参数，固定常数不计入参数量。
 
 | 参数 | 维度 | 参数量 |
 |---|---|---:|
@@ -207,13 +211,13 @@ P_{\mathrm{mHC}}
 =491547
 $$
 
-Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983094（983.094K）** 个参数。四路汇聚和残差融合不引入额外可学习参数，固定常数不计入参数量。
+Layer 0 的两套 mHC 合计 **983094（983.094K）** 个参数。
 
 #### 计算量
 
-只统计 mHC 的前向计算。加法、减法和乘法每次计 1 次，其他运算分别统计。
+仅统计 mHC 的前向算术运算，不含 Attention、MoE 本体，也不统计数据搬运和类型转换。
 
-下表为**一套 mHC 处理一个 token** 的计算量。
+乘加列合计加法、减法和乘法，每次计 1 次；RMS 均值按乘以 $1/20480$ 计 1 次乘法。除法、exp、rsqrt、比较分别计数。下表为**一套 mHC 处理一个 token** 的计算量。
 
 | 阶段 | 计算公式 | 乘加运算量 | 其他运算量 |
 |---|---|---:|---|
@@ -228,7 +232,7 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983094（983.09
 | 残差融合 $\mathrm{hc\_post}$ | $X'_j=\sum_{i=0}^{3}\mathrm{comb}_{ij}\odot X_i+\mathrm{post}_j\odot Y$ | $4\times5120\times(4+3+1+1)=184320$ | — |
 | **合计** | — | **1,244,901** | 除法：648 次<br>exp：24 次<br>rsqrt：1 次<br>比较：12 次 |
 
-每层包含 Attention、MoE 两套 mHC。Layer 0 的首次汇聚直接取第 0 路输入，省去 $35840$ 次乘加运算。下表为**每层 mHC 处理一个 token** 的计算量。
+将一套 mHC 的运算量乘以 $2$，得到**每层 mHC 处理一个 token**的计算量。Layer 0 的首次 pre 为 $[1,0,0,0]$；下表按理论上直接取第 $0$ 路输入计算，省去首次汇聚的 $35840$ 次乘加运算。
 
 | op | 普通层计算量 | Layer 0 计算量 |
 |---|---:|---:|
@@ -238,13 +242,17 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983094（983.09
 | rsqrt | 2 | 2 |
 | 比较 | 24 | 24 |
 
-计算量表中的 K、M 分别表示 $10^3$、$10^6$ 次运算。处理 $\mathrm{BxS}$ 个 token 时，各项计算量按 $\mathrm{BxS}$ 倍计。
+处理 $\mathrm{BxS}$ 个 token 时，各项计算量按 $\mathrm{BxS}$ 倍计。
 
 #### 空间占用
 
-记 $\mathrm{BxS}=B\times S$。以下分析**一套 mHC** 的前向空间占用。
+以下按**一套 mHC** 的完整逻辑张量核算理论 Global Memory 占用。数据类型见下表：FP32 每元素 $4$ Byte，BF16 每元素 $2$ Byte；$1\,\mathrm{KiB}=1024\,\mathrm{Byte}$，$1\,\mathrm{MiB}=1024^2\,\mathrm{Byte}$。
 
-分析口径：将整个 mHC 作为一个逻辑分析单元，参数和输入、输出计入 Global Memory；内部中间量（包括 $Z$、$Y$）假设可在 Shared Memory / Register 中保存和消化，不完整物化到 Global Memory。输入、输出分别计数，不考虑 mHC 与相邻模块之间的进一步融合。
+将整个 mHC 作为一个逻辑分析单元，采用以下存储假设：
+
+- **Weight**：模型参数长期保存在 Global Memory。
+- **I/O**：完整输入、输出保存在 Global Memory，并分别计数。$\mathrm{pre}_{\mathrm{in}}$ 从上一子层传入，$\mathrm{pre}_{\mathrm{out}}$ 传给下一子层；不考虑与相邻模块进一步融合或复用输入、输出存储。
+- **Internal Activation**：所有内部中间量（包括 $Z$、$Y$）假设可在 Shared Memory / Register 中保存和消化，不完整物化到 Global Memory。
 
 ##### Tensor 细节表
 
@@ -265,15 +273,9 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983094（983.09
 | $Y$ | Internal Activation | $[\mathrm{BxS},5120]$ | BF16 | $10240\mathrm{BxS}$ | 子层输出 → $\mathrm{hc\_post}$ |
 | $X'$ | I/O：Output | $[\mathrm{BxS},4,5120]$ | BF16 | $40960\mathrm{BxS}$ | mHC 输出 → 下一逻辑模块 |
 
-分类口径：
-
-- **Weight**：模型固有参数，需要长期保存。
-- **I/O**：当前逻辑单元边界上的完整输入、输出；$\mathrm{pre}_{\mathrm{in}}$ 来自上一子层，$\mathrm{pre}_{\mathrm{out}}$ 传给下一子层。
-- **Internal Activation**：逻辑上存在，按本文假设不完整物化到 Global Memory。
-
 ##### Global Memory 汇总表
 
-空间占用使用二进制单位：$1\,\mathrm{KiB}=1024\,\mathrm{Byte}$，$1\,\mathrm{MiB}=1024^2\,\mathrm{Byte}$。
+按上述假设，仅汇总参数、输入和输出：
 
 | 类别 | 包含 Tensor | Global Memory Size |
 |---|---|---:|
@@ -281,14 +283,6 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983094（983.09
 | Input | $X,\ \mathrm{pre}_{\mathrm{in}}$ | $40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
 | Output | $X',\ \mathrm{pre}_{\mathrm{out}}$ | $40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
 | **Required Global Memory** | Parameter + Input + Output | **$\approx1.88\,\mathrm{MiB}+80\,\mathrm{KiB}\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}$** |
-
-Internal Activation：
-
-$$
-X_{\mathrm{fp32}},\ r,\ M,\ \mathrm{post},\ \mathrm{comb},\ Z,\ Y
-$$
-
-以上中间量不计入本节 Required Global Memory；这是本文理想化分析口径。
 
 ##### 空间公式
 
@@ -318,13 +312,13 @@ $$
 
 ## 3. 两个入口 RMSNorm
 
-RMSNorm 对单路输入的每个 token 独立计算：
+RMSNorm 接收四路汇聚得到的单路输入 $Z$，输出 $U$，两者形状均为 `[BxS,5120]`。$\gamma:[5120]$ 是可学习权重，没有加法偏置；每个 token 沿 $5120$ 维独立归一化：
 
 $$
 U_{t,d}=\gamma_d Z_{t,d}\left(\frac{1}{5120}\sum_{k=0}^{5119}Z_{t,k}^2+10^{-20}\right)^{-1/2}
 $$
 
-输入输出都是 `[BxS,5120]`。$\gamma:[5120]$ 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 **10,240** 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+Attention 与 MoE 的入口各有一套 RMSNorm，合计 **10,240** 个权重。它不减均值；前述 mHC 的 RMS 因子则统计四路展平后的 $20480$ 维，且没有独立的 $\gamma$。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ## 4. 局部 Attention / SWA
 
@@ -341,90 +335,96 @@ $$
 | KV 归一化 | 独立 RMSNorm，gamma 为 `[512]` | `[BxS,512]` |
 | 位置编码 | Q 每头、KV 的最后 64 维做 RoPE | shape 不变 |
 
-64 个 Query 头共用同一份表示 $C=K=V:[B,S,512]$。其余 448 维不旋转。第 0 层的局部支路采用基数 10000 的 RoPE。这里不展开 KV 量化与存储布局。[核查：`Attention`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+本次生成的 KV 表示为 $C=K=V:[B,S,512]$，由 $64$ 个 Query 头共用。其余 $448$ 维不旋转。第 0 层的局部支路采用基数 $10000$ 的 RoPE。这里不展开 KV 量化与存储布局。[核查：`Attention`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ### 4.2 完整打分、mask、归一化、加权汇总
 
-`S_his` 表示参与本次评分的 KV 序列总长度，包括本次已加入 KV 的 token；它不是局部缓存的物理容量。以完整序列 $S_{\mathrm{his}}=S$ 为例，数学上保留每个 Query 对本会话全部 S 个位置的分数；batch 之间不互相打分。固定会话 b 和头 h：
+$S_{\mathrm{his}}$ 表示包含历史与本次 token 的完整逻辑 KV 序列长度。无历史前缀时 $S_{\mathrm{his}}=S$；以下统一按带历史的形状写公式。完整分数矩阵用于说明数学关系，窗口 mask 决定哪些位置实际参与计算，不要求在显存中保存全量历史 KV 或完整分数矩阵。
+
+固定会话 $b$ 和 Query 头 $h$，$Q_{b,h}:[S,512]$，$C_b:[S_{\mathrm{his}},512]$。先计算原始得分 $E$，再加 mask $M$，得到 $L$：
 
 $$
 E_{b,h}=Q_{b,h}C_b^T/\sqrt{512},\qquad L_{b,h}=E_{b,h}+M_b
 $$
 
-$$
-M_{b,i,j}=\begin{cases}0,&0\le p_{b,i}-p_{b,j}<128\\-\infty,&\text{其他}\end{cases}
-$$
-
-窗口是**主对角线及以下 127 条对角线**，不是完整下三角。带每头 sink 标量 $a_h$ 的权重与汇总为：
+$p^Q_{b,i}$ 是本次第 $i$ 个 Query 的绝对位置，$p^{KV}_{b,j}$ 是第 $j$ 个 KV 的绝对位置。窗口 mask 为：
 
 $$
-P_{b,h,i,j}=\frac{\exp(L_{b,h,i,j})}{\exp(a_h)+\sum_{k=0}^{S-1}\exp(L_{b,h,i,k})},\qquad
+M_{b,i,j}=\begin{cases}0,&0\le p^Q_{b,i}-p^{KV}_{b,j}<128\\-\infty,&\text{其他}\end{cases}
+$$
+
+每个 Query 只访问自身及此前最多 $127$ 个位置；在完整序列示意中，对应**主对角线及以下 127 条对角线**。
+
+每个头有一个可学习的 sink 标量 $a_h$，只进入归一化分母，不提供内容。归一化权重 $P$ 与加权汇总 $O$ 为：
+
+$$
+P_{b,h,i,j}=\frac{\exp(L_{b,h,i,j})}{\exp(a_h)+\sum_{k=0}^{S_{\mathrm{his}}-1}\exp(L_{b,h,i,k})},\qquad
 O_{b,h}=P_{b,h}C_b
 $$
 
 | 对象 | 展平 token 后的 shape |
 |---|---|
 | Q | `[BxS,64,512]` |
-| C=K=V | `[B,S,512]` |
-| E、L、P | `[BxS,64,S]` |
-| mask | `[B,S,S]`，沿头维广播 |
+| C=K=V | $[B,S_{\mathrm{his}},512]$ |
+| E、L、P | $[\mathrm{BxS},64,S_{\mathrm{his}}]$ |
+| mask | $[B,S,S_{\mathrm{his}}]$，沿头维广播 |
 | O | `[BxS,64,512]` |
 
-sink 只占用归一化分母，不提供内容；真实 token 的权重和不必为 1。最后一步按 `[S,512]` 的 C 排列写 **PC，不是 PCᵀ**。处理历史前缀时，完整数学分数最后一维改为 `S_his`，而不是提前截成窗口 128。[核查：`sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
+真实 token 的权重和不必为 $1$。加权汇总按 $C_b:[S_{\mathrm{his}},512]$ 的排列计算 $P_{b,h}C_b$，得到 $[S,512]$；这里只在同一会话内求和。[核查：`sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
 
 ### 4.3 输出恢复与两级分组投影
 
-对 O 每头最后 64 维按当前 Query 位置做逆 RoPE，随后：
+先对 $O$ 每头的最后 $64$ 维按当前 Query 位置做逆 RoPE，再将 $64$ 个头分为 $8$ 组，每组 $8$ 个头。两级输出投影的形状依次为：
 
 $$
 [\mathrm{BxS},64,512]\to[\mathrm{BxS},8,4096]\to[\mathrm{BxS},8,1024]\to[\mathrm{BxS},8192]\to[\mathrm{BxS},5120]
 $$
 
-每组 8 个头；第一组权重整体为 `[8,1024,4096]`，各组独立。第二级权重为 `[5120,8192]`，合并各组信息。两级之间没有额外非线性。这得到 Attention 的单路输出 Y，再交给 mHC 融合。
-
-以上描述数学对象，不表示实现会分配完整分数矩阵。
+第一级权重整体为 `[8,1024,4096]`，各组独立投影；第二级权重为 `[5120,8192]`，合并各组信息。两级之间没有额外非线性。最终得到单路输出 $Y:[\mathrm{BxS},5120]$，交给当前 Attention 侧的 mHC 融合。
 
 ## 5. MoE 前馈计算
 
 ### 5.1 选择 6 个路由专家
 
-MoE 输入 $U:[\mathrm{BxS},5120]$。路由投影权重 $W_R:[384,5120]$，本配置温度为 1：
+MoE 的输入 $U:[\mathrm{BxS},5120]$ 已经过 MoE 入口 RMSNorm。本配置有 $384$ 个路由专家，每个 token 选择其中 $6$ 个，另外计算 $1$ 个共享专家；路由温度为 $1$，融合权重的缩放系数为 $1.5$。
+
+路由投影权重为 $W_R:[384,5120]$。修正向量 $b:[384]$ 只影响专家选择，融合权重仍使用原始正数评分 $R$：
 
 $$
 R=\sqrt{\operatorname{Softplus}(UW_R^T)},\qquad I_t=\operatorname{TopKIndices}_{6}(R_t+b)
 $$
 
-$R:[\mathrm{BxS},384]$，$I:[\mathrm{BxS},6]$。修正量 $b:[384]$ 只改变选中哪些专家，融合权重仍取原始正数评分：
+$R:[\mathrm{BxS},384]$ 是专家评分，$I:[\mathrm{BxS},6]$ 是选中的专家索引。取出对应评分，归一化后乘以 $1.5$，得到融合权重 $g$：
 
 $$
 g_{t,k}=1.5\frac{R_{t,I_{t,k}}}{\sum_{\ell=0}^{5}R_{t,I_{t,\ell}}+10^{-20}}
 $$
 
-$g:[\mathrm{BxS},6]$，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 `bias_vl`；本文的文本路径使用 `bias`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+$g:[\mathrm{BxS},6]$，每个 token 的融合权重和约为 $1.5$。本文文本路径使用 `bias`；模型另外保留图像路径使用的修正向量 `bias_vl`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ### 5.2 每个专家的带截断 SwiGLU
 
-每个专家有独立的 $W_1,W_3:[2304,5120]$ 与 $W_2:[5120,2304]$，没有投影偏置：
+路由专家只处理分配给自己的 token。下面定义单个专家对输入 $U$ 的变换；每个专家有独立的 $W_1,W_3:[2304,5120]$ 与 $W_2:[5120,2304]$，没有投影偏置：
 
 $$
 F_e(U)=\left[\operatorname{SiLU}(\min(UW_{1,e}^T,10))\odot\operatorname{clip}(UW_{3,e}^T,-10,10)\right]W_{2,e}^T
 $$
 
-两条支路分别产生 `[BxS,2304]`；逐元素相乘后再投影回 `[BxS,5120]`。Gate 支路只截断上界，Up 支路同时截断上下界。[核查：`Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+对每个输入 token，两条支路先由 $5120$ 维投影为 $2304$ 维，相乘后再投影回 $5120$ 维。Gate 支路只截断上界，Up 支路同时截断上下界。[核查：`Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ### 5.3 合并路由专家与共享专家
+
+将选中的 $6$ 个路由专家输出按 $g$ 加权求和，再加共享专家输出：
 
 $$
 Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 $$
 
-每个 token 的 6 个路由专家输出可记作 `[BxS,6,5120]`，沿 6 求和得到 `[BxS,5120]`，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。[核查：`MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
-
-这里定义数学函数，不表示实际对每个 token 计算全部 384 个专家。
+选中的路由专家输出逻辑形状为 `[BxS,6,5120]`，沿专家维汇总后得到 $Y:[\mathrm{BxS},5120]$。共享专家不参加 Top-K，不乘路由权重；残差由当前 MoE 侧的 mHC 融合。[核查：`MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ## 6. 本层参数与状态汇总
 
-下表按前述逻辑维度求积，不含 embedding、输出头、量化 scale 和运行时系数，也不把 KV cache 算成参数：
+下表按完整 Layer 0 配置统计逻辑参数量，包含当前文本路径未使用的 `bias_vl`；不含 embedding、输出头和量化 scale，也不把动态 mHC 系数或 KV cache 算成参数：
 
 | 部分 | 逻辑参数量 |
 |---|---:|
@@ -435,9 +435,9 @@ $$
 | MoE（384＋1 个专家、路由投影、两套修正量） | 13,626,901,248 |
 | **Layer 0 合计** | **13,754,511,990** |
 
-推导检查：单专家参数为 $3\times5120\times2304=35,389,440$；MoE 为 $385\times35,389,440+384\times5120+2\times384$。每 token 只激活 6 个路由专家和共享专家，不能用总参数量直接代替当次计算量。
+单专家参数量为 $3\times5120\times2304=35389440$；MoE 合计 $385\times35389440+384\times5120+2\times384$，分别对应 $384+1$ 个专家、路由投影和两套修正向量。每个 token 只激活 $6$ 个路由专家与 $1$ 个共享专家，总参数量不等于当次激活参数量。
 
-本层对后续层输出四路残差 `[BxS,4,5120]`，以及给下一层 Attention 的 `pre_next:[BxS,4]`；它自己的局部 KV 状态逻辑容量为 `[B,128,512]`。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。
+本层向下一层输出四路残差 `[BxS,4,5120]` 和 `pre_next:[BxS,4]`；后者供下一层 Attention 入口汇聚使用。对 $B$ 个会话，本层局部 KV 缓存的逻辑容量为 `[B,128,512]`，没有独立的全局缓存；其字节占用需结合缓存实际数据类型计算。
 
 ## 7. 资料来源与版本说明
 
@@ -447,4 +447,4 @@ $$
 - [模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)：RMSNorm、Attention、Gate、Expert、MoE、Block。
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
-当前引用使用上游 `main` 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。本轮文字核查集中于概述与 mHC，不构成对 SWA、MoE 全部细节的重新验证。图示的维度与公式以相邻正文为准。
+资料核查日期为 2026-10-05。引用使用上游 `main` 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示的维度与公式以相邻正文为准。
