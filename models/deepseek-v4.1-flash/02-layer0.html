@@ -11,7 +11,7 @@
 <li><strong>子层计算</strong>：单路输入经过 RMSNorm，再执行 Attention 或 MoE。</li>
 <li><strong>出口融合</strong>：子层输出与保留的原四路残差融合，恢复为四路，交给下一子层。</li>
 </ul>
-<p>四路整体为 <code>[B*S,4,5120]</code>，汇聚后的单路为 <code>[B*S,5120]</code>。</p>
+<p>四路整体为 <code>[BxS,4,5120]</code>，汇聚后的单路为 <code>[BxS,5120]</code>。</p>
 <p>混合系数生成分支读取各自子层的四路输入。生成的 <strong>post、comb 用于当前出口，pre 用于下一子层入口</strong>。Layer 0 初始四路来自同一份 embedding，首次 pre 为 <code>[1,0,0,0]</code>。</p>
 <h2 id="mhc">2. mHC</h2>
 <h3 id="四路输入生成-raw-mixes">2.1 四路输入生成 raw mixes</h3>
@@ -542,10 +542,10 @@ M_{\mathrm{output}}=40K\cdot BS+16BS\,\mathrm{Byte}
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>U</mi><mrow><mi>t</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>=</mo><msub><mi>γ</mi><mi>d</mi></msub><msub><mi>Z</mi><mrow><mi>t</mi><mo>,</mo><mi>d</mi></mrow></msub><msup><mrow><mo stretchy="true" form="prefix">(</mo><mfrac><mn>1</mn><mn>5120</mn></mfrac><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>0</mn></mrow><mn>5119</mn></munderover><msubsup><mi>Z</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow><mn>2</mn></msubsup><mo>+</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>20</mn></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mo>−</mo><mn>1</mn><mi>/</mi><mn>2</mn></mrow></msup></mrow><annotation encoding="application/x-tex">
 U_{t,d}=\gamma_d Z_{t,d}\left(\frac{1}{5120}\sum_{k=0}^{5119}Z_{t,k}^2+10^{-20}\right)^{-1/2}
 </annotation></semantics></math></p>
-<p>输入输出都是 <code>[B*S,5120]</code>。<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\gamma:[5120]</annotation></semantics></math> 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 <strong>10,240</strong> 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>RMSNorm</code></a></p>
+<p>输入输出都是 <code>[BxS,5120]</code>。<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\gamma:[5120]</annotation></semantics></math> 可学习，没有加法偏置；不减均值。Attention 与 MoE 的入口各有一套，合计 <strong>10,240</strong> 个权重。这里与 mHC 的 RMS 因子不同：mHC 统计的是四路展平后的 20480 维，且没有独立 gamma。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>RMSNorm</code></a></p>
 <h2 id="局部-attention-swa">4. 局部 Attention / SWA</h2>
 <h3 id="从单路输入生成-q-与共享-kv">4.1 从单路输入生成 Q 与共享 KV</h3>
-<p>以下 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[B*S,5120]</annotation></semantics></math> 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：</p>
+<p>以下 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[BxS,5120]</annotation></semantics></math> 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：</p>
 <table>
 <thead>
 <tr class="header">
@@ -558,27 +558,27 @@ U_{t,d}=\gamma_d Z_{t,d}\left(\frac{1}{5120}\sum_{k=0}^{5119}Z_{t,k}^2+10^{-20}\
 <tr class="odd">
 <td>Q 降维</td>
 <td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mi>Q</mi><mi>a</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>1280</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_{Qa}:[1280,5120]</annotation></semantics></math></td>
-<td><code>[B*S,1280]</code></td>
+<td><code>[BxS,1280]</code></td>
 </tr>
 <tr class="even">
 <td>Q 归一化</td>
 <td>独立 RMSNorm，gamma 为 <code>[1280]</code></td>
-<td><code>[B*S,1280]</code></td>
+<td><code>[BxS,1280]</code></td>
 </tr>
 <tr class="odd">
 <td>Q 展开</td>
 <td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mi>Q</mi><mi>b</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>32768</mn><mo>,</mo><mn>1280</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_{Qb}:[32768,1280]</annotation></semantics></math>，分成 64 头</td>
-<td><code>[B*S,64,512]</code></td>
+<td><code>[BxS,64,512]</code></td>
 </tr>
 <tr class="even">
 <td>KV 投影</td>
 <td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mi>K</mi><mi>V</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>512</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_{KV}:[512,5120]</annotation></semantics></math></td>
-<td><code>[B*S,512]</code></td>
+<td><code>[BxS,512]</code></td>
 </tr>
 <tr class="odd">
 <td>KV 归一化</td>
 <td>独立 RMSNorm，gamma 为 <code>[512]</code></td>
-<td><code>[B*S,512]</code></td>
+<td><code>[BxS,512]</code></td>
 </tr>
 <tr class="even">
 <td>位置编码</td>
@@ -611,7 +611,7 @@ O_{b,h}=P_{b,h}C_b
 <tbody>
 <tr class="odd">
 <td>Q</td>
-<td><code>[B*S,64,512]</code></td>
+<td><code>[BxS,64,512]</code></td>
 </tr>
 <tr class="even">
 <td>C=K=V</td>
@@ -619,7 +619,7 @@ O_{b,h}=P_{b,h}C_b
 </tr>
 <tr class="odd">
 <td>E、L、P</td>
-<td><code>[B*S,64,S]</code></td>
+<td><code>[BxS,64,S]</code></td>
 </tr>
 <tr class="even">
 <td>mask</td>
@@ -627,40 +627,40 @@ O_{b,h}=P_{b,h}C_b
 </tr>
 <tr class="odd">
 <td>O</td>
-<td><code>[B*S,64,512]</code></td>
+<td><code>[BxS,64,512]</code></td>
 </tr>
 </tbody>
 </table>
 <p>sink 只占用归一化分母，不提供内容；真实 token 的权重和不必为 1。最后一步按 <code>[S,512]</code> 的 C 排列写 <strong>PC，不是 PCᵀ</strong>。处理历史前缀时，完整数学分数最后一维改为 <code>S_his</code>，而不是提前截成窗口 128。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">核查：<code>sparse_attn</code></a></p>
 <h3 id="输出恢复与两级分组投影">4.3 输出恢复与两级分组投影</h3>
 <p>对 O 每头最后 64 维按当前 Query 位置做逆 RoPE，随后：</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>64</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>8</mn><mo>,</mo><mn>4096</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>8</mn><mo>,</mo><mn>1024</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>8192</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
-[B*S,64,512]\to[B*S,8,4096]\to[B*S,8,1024]\to[B*S,8192]\to[B*S,5120]
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>64</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>8</mn><mo>,</mo><mn>4096</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>8</mn><mo>,</mo><mn>1024</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>8192</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+[BxS,64,512]\to[BxS,8,4096]\to[BxS,8,1024]\to[BxS,8192]\to[BxS,5120]
 </annotation></semantics></math></p>
 <p>每组 8 个头；第一组权重整体为 <code>[8,1024,4096]</code>，各组独立。第二级权重为 <code>[5120,8192]</code>，合并各组信息。两级之间没有额外非线性。这得到 Attention 的单路输出 Y，再交给 mHC 融合。</p>
 <p>以上描述数学对象，不表示实现会分配完整分数矩阵。</p>
 <h2 id="moe-前馈计算">5. MoE 前馈计算</h2>
 <h3 id="选择-6-个路由专家">5.1 选择 6 个路由专家</h3>
-<p>MoE 输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[B*S,5120]</annotation></semantics></math>。路由投影权重 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>R</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_R:[384,5120]</annotation></semantics></math>，本配置温度为 1：</p>
+<p>MoE 输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[BxS,5120]</annotation></semantics></math>。路由投影权重 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>R</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_R:[384,5120]</annotation></semantics></math>，本配置温度为 1：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>=</mo><msqrt><mrow><mo>Softplus</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><msubsup><mi>W</mi><mi>R</mi><mi>T</mi></msubsup><mo stretchy="true" form="postfix">)</mo></mrow></mrow></msqrt><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>I</mi><mi>t</mi></msub><mo>=</mo><msub><mo>TopKIndices</mo><mn>6</mn></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>R</mi><mi>t</mi></msub><mo>+</mo><mi>b</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
 R=\sqrt{\operatorname{Softplus}(UW_R^T)},\qquad I_t=\operatorname{TopKIndices}_{6}(R_t+b)
 </annotation></semantics></math></p>
-<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">R:[B*S,384]</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>I</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">I:[B*S,6]</annotation></semantics></math>。修正量 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b:[384]</annotation></semantics></math> 只改变选中哪些专家，融合权重仍取原始正数评分：</p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">R:[BxS,384]</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>I</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">I:[BxS,6]</annotation></semantics></math>。修正量 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b:[384]</annotation></semantics></math> 只改变选中哪些专家，融合权重仍取原始正数评分：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>g</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub><mo>=</mo><mn>1.5</mn><mfrac><msub><mi>R</mi><mrow><mi>t</mi><mo>,</mo><msub><mi>I</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub></mrow></msub><mrow><munderover><mo>∑</mo><mrow><mo>ℓ</mo><mo>=</mo><mn>0</mn></mrow><mn>5</mn></munderover><msub><mi>R</mi><mrow><mi>t</mi><mo>,</mo><msub><mi>I</mi><mrow><mi>t</mi><mo>,</mo><mo>ℓ</mo></mrow></msub></mrow></msub><mo>+</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>20</mn></mrow></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">
 g_{t,k}=1.5\frac{R_{t,I_{t,k}}}{\sum_{\ell=0}^{5}R_{t,I_{t,\ell}}+10^{-20}}
 </annotation></semantics></math></p>
-<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>*</mo><mi>S</mi><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">g:[B*S,6]</annotation></semantics></math>，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 <code>bias_vl</code>；本文的文本路径使用 <code>bias</code>。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Gate</code></a></p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mi>x</mi><mi>S</mi><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">g:[BxS,6]</annotation></semantics></math>，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 <code>bias_vl</code>；本文的文本路径使用 <code>bias</code>。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Gate</code></a></p>
 <h3 id="每个专家的带截断-swiglu">5.2 每个专家的带截断 SwiGLU</h3>
 <p>每个专家有独立的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mn>1</mn></msub><mo>,</mo><msub><mi>W</mi><mn>3</mn></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>2304</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_1,W_3:[2304,5120]</annotation></semantics></math> 与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mn>2</mn></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo>,</mo><mn>2304</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_2:[5120,2304]</annotation></semantics></math>，没有投影偏置：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>F</mi><mi>e</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><mo>SiLU</mo><mrow><mo stretchy="true" form="prefix">(</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><msubsup><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>e</mi></mrow><mi>T</mi></msubsup><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>⊙</mo><mo>clip</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><msubsup><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>e</mi></mrow><mi>T</mi></msubsup><mo>,</mo><mo>−</mo><mn>10</mn><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">]</mo></mrow><msubsup><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>e</mi></mrow><mi>T</mi></msubsup></mrow><annotation encoding="application/x-tex">
 F_e(U)=\left[\operatorname{SiLU}(\min(UW_{1,e}^T,10))\odot\operatorname{clip}(UW_{3,e}^T,-10,10)\right]W_{2,e}^T
 </annotation></semantics></math></p>
-<p>两条支路分别产生 <code>[B*S,2304]</code>；逐元素相乘后再投影回 <code>[B*S,5120]</code>。Gate 支路只截断上界，Up 支路同时截断上下界。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Expert</code></a></p>
+<p>两条支路分别产生 <code>[BxS,2304]</code>；逐元素相乘后再投影回 <code>[BxS,5120]</code>。Gate 支路只截断上界，Up 支路同时截断上下界。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Expert</code></a></p>
 <h3 id="合并路由专家与共享专家">5.3 合并路由专家与共享专家</h3>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>Y</mi><mi>t</mi></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>0</mn></mrow><mn>5</mn></munderover><msub><mi>g</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub><msub><mi>F</mi><msub><mi>I</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>U</mi><mi>t</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><msub><mi>F</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>U</mi><mi>t</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
 Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 </annotation></semantics></math></p>
-<p>每个 token 的 6 个路由专家输出可记作 <code>[B*S,6,5120]</code>，沿 6 求和得到 <code>[B*S,5120]</code>，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>MoE</code></a></p>
+<p>每个 token 的 6 个路由专家输出可记作 <code>[BxS,6,5120]</code>，沿 6 求和得到 <code>[BxS,5120]</code>，再加共享专家。共享专家不参加 Top-K，不乘路由权重。这里不再加输入 U：残差在外部 mHC 完成。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>MoE</code></a></p>
 <p>这里定义数学函数，不表示实际对每个 token 计算全部 384 个专家。</p>
 <h2 id="本层参数与状态汇总">6. 本层参数与状态汇总</h2>
 <p>下表按前述逻辑维度求积，不含 embedding、输出头、量化 scale 和运行时系数，也不把 KV cache 算成参数：</p>
@@ -699,7 +699,7 @@ Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 </tbody>
 </table>
 <p>推导检查：单专家参数为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>3</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2304</mn><mo>=</mo><mn>35</mn><mo>,</mo><mn>389</mn><mo>,</mo><mn>440</mn></mrow><annotation encoding="application/x-tex">3\times5120\times2304=35,389,440</annotation></semantics></math>；MoE 为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>385</mn><mo>×</mo><mn>35</mn><mo>,</mo><mn>389</mn><mo>,</mo><mn>440</mn><mo>+</mo><mn>384</mn><mo>×</mo><mn>5120</mn><mo>+</mo><mn>2</mn><mo>×</mo><mn>384</mn></mrow><annotation encoding="application/x-tex">385\times35,389,440+384\times5120+2\times384</annotation></semantics></math>。每 token 只激活 6 个路由专家和共享专家，不能用总参数量直接代替当次计算量。</p>
-<p>本层对后续层输出四路残差 <code>[B*S,4,5120]</code>，以及给下一层 Attention 的 <code>pre_next:[B*S,4]</code>；它自己的局部 KV 状态逻辑容量为 <code>[B,128,512]</code>。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。</p>
+<p>本层对后续层输出四路残差 <code>[BxS,4,5120]</code>，以及给下一层 Attention 的 <code>pre_next:[BxS,4]</code>；它自己的局部 KV 状态逻辑容量为 <code>[B,128,512]</code>。没有独立的全局缓存。容量按量化字节数的计算放到成本分析篇。</p>
 <h2 id="资料来源与版本说明">7. 资料来源与版本说明</h2>
 <p>本文分析对象为 <strong>DeepSeek-V4.1-Flash</strong>，数学关系与维度依据以下上游资料：</p>
 <ul>
