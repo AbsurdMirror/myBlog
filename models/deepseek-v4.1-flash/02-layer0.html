@@ -211,7 +211,7 @@ P_{\mathrm{mHC}}
 =24\times20480+24+3
 =491547
 </annotation></semantics></math></p>
-<p>Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 <strong>983,094</strong> 个参数。四路汇聚和残差融合不引入额外可学习参数，固定常数不计入参数量。</p>
+<p>Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 <strong>983094（983.094K）</strong> 个参数。四路汇聚和残差融合不引入额外可学习参数，固定常数不计入参数量。</p>
 <h4 id="计算量">计算量</h4>
 <p>只统计 mHC 的前向计算。加法、减法和乘法每次计 1 次，其他运算分别统计。</p>
 <p>下表为<strong>一套 mHC 处理一个 token</strong> 的计算量。</p>
