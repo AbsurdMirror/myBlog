@@ -30,13 +30,13 @@ Layer 0 由 Attention 和 MoE 两个串行子层组成，每个子层都通过 m
 
 四路输入经过展平、RMS 缩放与联合投影，生成混合系数的原始值：
 
-- **展平**：$X_0$～$X_3$ 沿 hidden 维拼接，每个 token 的 $4\times5120$ 个元素组成 $X$ $[B S,20480]$。
+- **展平**：$X_0$～$X_3$ 沿 hidden 维拼接，每个 token 的 $4\times5120$ 个元素组成 $X$ $[\mathrm{BxS},20480]$。
 
     $$
     X=[X_0\;X_1\;X_2\;X_3]
     $$
 
-- **RMS 缩放**：对每行的 $20480$ 个元素计算一个缩放因子，得到 $r$ $[B S,1]$；这里没有可学习的缩放权重。
+- **RMS 缩放**：对每行的 $20480$ 个元素计算一个缩放因子，得到 $r$ $[\mathrm{BxS},1]$；这里没有可学习的缩放权重。
 
     $$
     r_t=\left(\frac{1}{20480}\sum_{d=0}^{20479}X_{t,d}^{2}
@@ -44,7 +44,7 @@ Layer 0 由 Attention 和 MoE 两个串行子层组成，每个子层都通过 m
     \qquad \epsilon_{\mathrm{norm}}=10^{-20}
     $$
 
-- **联合投影**：$X$ 与权重 $W$ $[24,20480]$ 相乘，再按行乘 $r$，得到 $M$ $[B S,24]$。
+- **联合投影**：$X$ 与权重 $W$ $[24,20480]$ 相乘，再按行乘 $r$，得到 $M$ $[\mathrm{BxS},24]$。
 
     $$
     M=(XW^{\mathsf T})\odot r
@@ -78,7 +78,7 @@ $$
 
 #### 生成 pre
 
-输出 $\mathrm{pre}:[B S,4]$：
+输出 $\mathrm{pre}:[\mathrm{BxS},4]$：
 
 $$
 \mathrm{pre}=\sigma(M_{\mathrm{pre}}\cdot s_0+b_{\mathrm{pre}})+\epsilon_{\mathrm{hc}}
@@ -86,7 +86,7 @@ $$
 
 #### 生成 post
 
-输出 $\mathrm{post}:[B S,4]$：
+输出 $\mathrm{post}:[\mathrm{BxS},4]$：
 
 $$
 \mathrm{post}=2\sigma(M_{\mathrm{post}}\cdot s_1+b_{\mathrm{post}})
@@ -116,13 +116,13 @@ $$
 
 #### 生成 comb
 
-先得到 $C_0:[B S,16]$：
+先得到 $C_0:[\mathrm{BxS},16]$：
 
 $$
 C_0=M_{\mathrm{comb}}\cdot s_2+b_{\mathrm{comb}}
 $$
 
-将 $C_0$ 重排为 $[B S,4,4]$。每个 token 的矩阵先做行 Softmax、逐项加 $c$，再做首次列归一化；随后执行 $19$ 次 Sinkhorn 迭代：
+将 $C_0$ 重排为 $[\mathrm{BxS},4,4]$。每个 token 的矩阵先做行 Softmax、逐项加 $c$，再做首次列归一化；随后执行 $19$ 次 Sinkhorn 迭代：
 
 $$
 \mathrm{comb}=
@@ -135,7 +135,7 @@ $$
 \right)
 $$
 
-最终输出 $\mathrm{comb}:[B S,4,4]$。
+最终输出 $\mathrm{comb}:[\mathrm{BxS},4,4]$。
 
 ### 2.3 四路汇聚 hc_pre
 
@@ -145,9 +145,9 @@ $$
 
 | 对象 | 维度与含义 |
 |---|---|
-| $X_0,X_1,X_2,X_3$ | 各为 $[B S,5120]$，表示四路残差 |
-| $a_0,a_1,a_2,a_3$ | $\mathrm{pre}:[B S,4]$ 的四列，各按 $[B S,1]$ 使用 |
-| $Z$ | $[B S,5120]$，表示汇聚后的单路输入 |
+| $X_0,X_1,X_2,X_3$ | 各为 $[\mathrm{BxS},5120]$，表示四路残差 |
+| $a_0,a_1,a_2,a_3$ | $\mathrm{pre}:[\mathrm{BxS},4]$ 的四列，各按 $[\mathrm{BxS},1]$ 使用 |
+| $Z$ | $[\mathrm{BxS},5120]$，表示汇聚后的单路输入 |
 
 $$
 Z=a_0\odot X_0+a_1\odot X_1+a_2\odot X_2+a_3\odot X_3
@@ -163,7 +163,7 @@ $$
 
 左侧展示四路输出的整体融合，右侧展开单个输出流 $j$ 的计算，两侧表达的是同一个过程。
 
-输入为保留的四路残差 $X:[B S,4,5120]$ 和子层输出 $Y:[B S,5120]$，使用当前子层生成的 $\mathrm{comb}:[B S,4,4]$ 与 $\mathrm{post}:[B S,4]$。
+输入为保留的四路残差 $X:[\mathrm{BxS},4,5120]$ 和子层输出 $Y:[\mathrm{BxS},5120]$，使用当前子层生成的 $\mathrm{comb}:[\mathrm{BxS},4,4]$ 与 $\mathrm{post}:[\mathrm{BxS},4]$。
 
 - **旧残差混合**：每个输出流 $j$ 都接收旧四路的加权结果。$\mathrm{comb}_{t,i,j}$ 表示 token $t$ 的旧第 $i$ 路到新第 $j$ 路的系数。
 
@@ -183,7 +183,7 @@ $$
 
 $$
 X'=X_{\mathrm{post}}+Y_{\mathrm{post}},
-\qquad X':[B S,4,5120]
+\qquad X':[\mathrm{BxS},4,5120]
 $$
 
 其中，$t$ 表示 token，$i$、$j$ 分别表示旧、新残差流，$d$ 表示 hidden 元素。
@@ -238,11 +238,11 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983,094** 个�
 | rsqrt | 2 | 2 |
 | 比较 | 24 | 24 |
 
-计算量表中的 K、M 分别表示 $10^3$、$10^6$ 次运算。处理 $B\times S$ 个 token 时，各项计算量按 $B\times S$ 倍计。
+计算量表中的 K、M 分别表示 $10^3$、$10^6$ 次运算。处理 $\mathrm{BxS}$ 个 token 时，各项计算量按 $\mathrm{BxS}$ 倍计。
 
 #### 空间占用
 
-记 $BS=B\times S$。以下分析**一套 mHC** 的前向空间占用。
+记 $\mathrm{BxS}=B\times S$。以下分析**一套 mHC** 的前向空间占用。
 
 分析口径：将整个 mHC 作为一个逻辑分析单元，参数和输入、输出计入 Global Memory；内部中间量（包括 $Z$、$Y$）假设可在 Shared Memory / Register 中保存和消化，不完整物化到 Global Memory。输入、输出分别计数，不考虑 mHC 与相邻模块之间的进一步融合。
 
@@ -253,17 +253,17 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983,094** 个�
 | $W$ | Weight | $[24,20480]$ | FP32 | $1966080$ | 模型加载 → 模型卸载 |
 | $\mathrm{hc\_scale}$ | Weight | $[3]$ | FP32 | $12$ | 模型加载 → 模型卸载 |
 | $\mathrm{hc\_base}$ | Weight | $[24]$ | FP32 | $96$ | 模型加载 → 模型卸载 |
-| $X$ | I/O：Input | $[BS,4,5120]$ | BF16 | $40960BS$ | mHC 输入 → 当前 mHC 完成 |
-| $\mathrm{pre}_{\mathrm{in}}$ | I/O：Input | $[BS,4]$ | FP32 | $16BS$ | 上一子层传入 → 当前 $\mathrm{hc\_pre}$ 完成 |
-| $X_{\mathrm{fp32}}$ | Internal Activation | $[BS,20480]$ | FP32 | $81920BS$ | 类型转换 / 归一化 / 投影阶段 |
-| $r$ | Internal Activation | $[BS,1]$ | FP32 | $4BS$ | 归一化 → 投影 |
-| $M$ | Internal Activation | $[BS,24]$ | FP32 | $96BS$ | 系数投影 → pre/post/comb 生成 |
-| $\mathrm{pre}_{\mathrm{out}}$ | I/O：Output | $[BS,4]$ | FP32 | $16BS$ | 当前系数生成 → 下一子层 $\mathrm{hc\_pre}$ 完成 |
-| $\mathrm{post}$ | Internal Activation | $[BS,4]$ | FP32 | $16BS$ | 系数生成 → 当前 $\mathrm{hc\_post}$ |
-| $\mathrm{comb}$ | Internal Activation | $[BS,4,4]$ | FP32 | $64BS$ | 系数生成 → 当前 $\mathrm{hc\_post}$ |
-| $Z$ | Internal Activation | $[BS,5120]$ | BF16 | $10240BS$ | $\mathrm{hc\_pre}$ 输出 → 子层计算 |
-| $Y$ | Internal Activation | $[BS,5120]$ | BF16 | $10240BS$ | 子层输出 → $\mathrm{hc\_post}$ |
-| $X'$ | I/O：Output | $[BS,4,5120]$ | BF16 | $40960BS$ | mHC 输出 → 下一逻辑模块 |
+| $X$ | I/O：Input | $[\mathrm{BxS},4,5120]$ | BF16 | $40960\mathrm{BxS}$ | mHC 输入 → 当前 mHC 完成 |
+| $\mathrm{pre}_{\mathrm{in}}$ | I/O：Input | $[\mathrm{BxS},4]$ | FP32 | $16\mathrm{BxS}$ | 上一子层传入 → 当前 $\mathrm{hc\_pre}$ 完成 |
+| $X_{\mathrm{fp32}}$ | Internal Activation | $[\mathrm{BxS},20480]$ | FP32 | $81920\mathrm{BxS}$ | 类型转换 / 归一化 / 投影阶段 |
+| $r$ | Internal Activation | $[\mathrm{BxS},1]$ | FP32 | $4\mathrm{BxS}$ | 归一化 → 投影 |
+| $M$ | Internal Activation | $[\mathrm{BxS},24]$ | FP32 | $96\mathrm{BxS}$ | 系数投影 → pre/post/comb 生成 |
+| $\mathrm{pre}_{\mathrm{out}}$ | I/O：Output | $[\mathrm{BxS},4]$ | FP32 | $16\mathrm{BxS}$ | 当前系数生成 → 下一子层 $\mathrm{hc\_pre}$ 完成 |
+| $\mathrm{post}$ | Internal Activation | $[\mathrm{BxS},4]$ | FP32 | $16\mathrm{BxS}$ | 系数生成 → 当前 $\mathrm{hc\_post}$ |
+| $\mathrm{comb}$ | Internal Activation | $[\mathrm{BxS},4,4]$ | FP32 | $64\mathrm{BxS}$ | 系数生成 → 当前 $\mathrm{hc\_post}$ |
+| $Z$ | Internal Activation | $[\mathrm{BxS},5120]$ | BF16 | $10240\mathrm{BxS}$ | $\mathrm{hc\_pre}$ 输出 → 子层计算 |
+| $Y$ | Internal Activation | $[\mathrm{BxS},5120]$ | BF16 | $10240\mathrm{BxS}$ | 子层输出 → $\mathrm{hc\_post}$ |
+| $X'$ | I/O：Output | $[\mathrm{BxS},4,5120]$ | BF16 | $40960\mathrm{BxS}$ | mHC 输出 → 下一逻辑模块 |
 
 分类口径：
 
@@ -278,9 +278,9 @@ Layer 0 的 Attention、MoE 各有独立的一套 mHC，合计 **983,094** 个�
 | 类别 | 包含 Tensor | Global Memory Size |
 |---|---|---:|
 | Parameter | $W,\ \mathrm{hc\_scale},\ \mathrm{hc\_base}$ | $\approx1.88M$ |
-| Input | $X,\ \mathrm{pre}_{\mathrm{in}}$ | $40K\cdot BS+16BS\,\mathrm{Byte}$ |
-| Output | $X',\ \mathrm{pre}_{\mathrm{out}}$ | $40K\cdot BS+16BS\,\mathrm{Byte}$ |
-| **Required Global Memory** | Parameter + Input + Output | **$1.88M+80K\cdot BS+32BS\,\mathrm{Byte}$** |
+| Input | $X,\ \mathrm{pre}_{\mathrm{in}}$ | $40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
+| Output | $X',\ \mathrm{pre}_{\mathrm{out}}$ | $40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}$ |
+| **Required Global Memory** | Parameter + Input + Output | **$1.88M+80K\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}$** |
 
 Internal Activation：
 
@@ -296,7 +296,7 @@ $$
 \boxed{
 M_{\mathrm{mHC}}(B,S)
 \approx
-1.88M+80K\cdot BS+32BS\,\mathrm{Byte}
+1.88M+80K\cdot \mathrm{BxS}+32\mathrm{BxS}\,\mathrm{Byte}
 }
 $$
 
@@ -307,11 +307,11 @@ M_{\mathrm{param}}\approx1.88M
 $$
 
 $$
-M_{\mathrm{input}}=40K\cdot BS+16BS\,\mathrm{Byte}
+M_{\mathrm{input}}=40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
 $$
 
 $$
-M_{\mathrm{output}}=40K\cdot BS+16BS\,\mathrm{Byte}
+M_{\mathrm{output}}=40K\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
 $$
 
 形状与类型依据：[模型配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json)、[模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)、[系数生成核](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)。核查日期：2026-10-05。
@@ -330,7 +330,7 @@ $$
 
 ### 4.1 从单路输入生成 Q 与共享 KV
 
-以下 $U:[BxS,5120]$ 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：
+以下 $U:[\mathrm{BxS},5120]$ 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：
 
 | 步骤 | 权重 / 操作 | 输出 shape |
 |---|---|---|
@@ -377,7 +377,7 @@ sink 只占用归一化分母，不提供内容；真实 token 的权重和不�
 对 O 每头最后 64 维按当前 Query 位置做逆 RoPE，随后：
 
 $$
-[BxS,64,512]\to[BxS,8,4096]\to[BxS,8,1024]\to[BxS,8192]\to[BxS,5120]
+[\mathrm{BxS},64,512]\to[\mathrm{BxS},8,4096]\to[\mathrm{BxS},8,1024]\to[\mathrm{BxS},8192]\to[\mathrm{BxS},5120]
 $$
 
 每组 8 个头；第一组权重整体为 `[8,1024,4096]`，各组独立。第二级权重为 `[5120,8192]`，合并各组信息。两级之间没有额外非线性。这得到 Attention 的单路输出 Y，再交给 mHC 融合。
@@ -388,19 +388,19 @@ $$
 
 ### 5.1 选择 6 个路由专家
 
-MoE 输入 $U:[BxS,5120]$。路由投影权重 $W_R:[384,5120]$，本配置温度为 1：
+MoE 输入 $U:[\mathrm{BxS},5120]$。路由投影权重 $W_R:[384,5120]$，本配置温度为 1：
 
 $$
 R=\sqrt{\operatorname{Softplus}(UW_R^T)},\qquad I_t=\operatorname{TopKIndices}_{6}(R_t+b)
 $$
 
-$R:[BxS,384]$，$I:[BxS,6]$。修正量 $b:[384]$ 只改变选中哪些专家，融合权重仍取原始正数评分：
+$R:[\mathrm{BxS},384]$，$I:[\mathrm{BxS},6]$。修正量 $b:[384]$ 只改变选中哪些专家，融合权重仍取原始正数评分：
 
 $$
 g_{t,k}=1.5\frac{R_{t,I_{t,k}}}{\sum_{\ell=0}^{5}R_{t,I_{t,\ell}}+10^{-20}}
 $$
 
-$g:[BxS,6]$，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 `bias_vl`；本文的文本路径使用 `bias`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+$g:[\mathrm{BxS},6]$，各 token 的权重和约为 1.5。图像 token 使用另一个修正向量 `bias_vl`；本文的文本路径使用 `bias`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ### 5.2 每个专家的带截断 SwiGLU
 
@@ -448,4 +448,5 @@ $$
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
 当前引用使用上游 `main` 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。本轮文字核查集中于概述与 mHC，不构成对 SWA、MoE 全部细节的重新验证。图示的维度与公式以相邻正文为准。
+
 
