@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--preview', action='store_true')
     args = parser.parse_args()
     mode = 'preview' if args.preview else 'published'
-    pages = json.loads((ROOT/'publication.json').read_text())[mode]
+    pages = json.loads((ROOT/'publication.json').read_text(encoding='utf-8'))[mode]
     docs, staged = ROOT/'docs', ROOT/'.build/docs'
     if staged.exists(): shutil.rmtree(staged)
     staged.mkdir(parents=True)

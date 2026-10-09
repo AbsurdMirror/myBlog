@@ -28,12 +28,12 @@ def main() -> None:
             raise ValueError('Unsupported image format: ' + str(path))
         return 'src="data:' + mime + ';base64,' + base64.b64encode(path.read_bytes()).decode('ascii') + '"'
     content = re.sub(r'src="([^"]+)"', embed, content)
-    css = (ROOT / 'theme/site.css').read_text()
-    js = (ROOT / 'theme/viewer.js').read_text()
+    css = (ROOT / 'theme/site.css').read_text(encoding='utf-8')
+    js = (ROOT / 'theme/viewer.js').read_text(encoding='utf-8')
     title = html.escape(meta.get('title', source.stem))
     page = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>'''+title+'''</title><style>'''+css+'''</style></head><body>
     <header class="topbar"><span class="brand">图解技术笔记</span><span class="topmeta">MODEL NOTES · 审阅版</span></header>
-    <aside class="sidebar"><p class="series-label">模型解析 / 02</p><strong>DeepSeek V4.1</strong><p class="sidebar-note">Layer 0 · 数学结构</p><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot">五张原图 · 离线可读<br>点击图片进入放大查看</div></aside>
+    <aside class="sidebar"><p class="series-label">模型解析 / 02</p><strong>DeepSeek V4.1</strong><p class="sidebar-note">Layer 0 · 数学结构</p><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot">八张原图 · 离线可读<br>点击图片进入放大查看</div></aside>
     <main><div class="edition"><span>LAYER 0 / EXPLAINED</span><span class="badge">DRAFT · 待确认</span></div><article class="doc">'''+content+'''</article>
     <footer>由同一份 Markdown 生成 · 公式为 MathML · 原始配图未改动<br>2026-10-03 / 不代表已发布</footer></main><script>'''+js+'''</script></body></html>'''
     output = Path(args.output)

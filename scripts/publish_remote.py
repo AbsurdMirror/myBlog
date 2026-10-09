@@ -94,9 +94,9 @@ def main()->None:
     args=ap.parse_args()
     subprocess.run([sys.executable,str(ROOT/'scripts/check.py'),'--published-only'],check=True)
     subprocess.run([sys.executable,str(ROOT/'scripts/check_site.py')],check=True)
-    manifest=json.loads((ROOT/'docs/models/deepseek-v4.1-flash/assets/figures.json').read_text())
+    manifest=json.loads((ROOT/'docs/models/deepseek-v4.1-flash/assets/figures.json').read_text(encoding='utf-8'))
     source=source_files()
-    print('Ready:',len(source),'source files; five original PNGs; full static site')
+    print('Ready:',len(source),'source files;',len(manifest['figures']),'original PNGs; full static site')
     if not args.execute:
         print('DRY RUN: no repository or Pages changes performed');return
     TOKEN=os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN') or ''
@@ -106,7 +106,7 @@ def main()->None:
     if not TOKEN:raise RuntimeError('No authenticated native GitHub context is present. No remote write attempted.')
     settings=request('GET','')
     if settings.get('full_name')!=REPO:raise RuntimeError('Unexpected repository')
-    expected=json.loads((ROOT/'progress/remote-base.json').read_text())['expected_source_head']
+    expected=json.loads((ROOT/'progress/remote-base.json').read_text(encoding='utf-8'))['expected_source_head']
     current=head(BRANCH)
     if current!=expected:raise RuntimeError('Source branch moved; fetch and reconcile before publishing: '+current)
     # The original archive stays in the base tree. Only approved source paths change.
@@ -123,7 +123,7 @@ def main()->None:
         raise RuntimeError('Source is safely merged. Pages configuration differs from expected gh-pages/root; inspect before updating.')
     public={p.relative_to(ROOT/'site').as_posix():p.read_bytes() for p in (ROOT/'site').rglob('*') if p.is_file()}
     # base_tree preserves existing legacy routes/resources; new site overrides index.
-    deploy_sha=commit_files('gh-pages',public,'site: publish Layer 0 with five original figures')
+    deploy_sha=commit_files('gh-pages',public,'site: publish Layer 0 with original figures')
     site_url=pages.get('html_url') or 'https://absurdmirror.github.io/myBlog/'
     page_url=site_url.rstrip('/')+'/models/deepseek-v4.1-flash/02-layer0.html'
     deadline=time.monotonic()+args.poll_seconds;last_error='Waiting for Pages'
@@ -137,7 +137,7 @@ def main()->None:
             result={'deployed':True,'source_commit':main_sha,'pages_commit':deploy_sha,'page_url':page_url,
                     'markdown_url':f'https://github.com/{REPO}/blob/main/{LAYER}',
                     'image_urls':[f'https://github.com/{REPO}/blob/main/docs/models/deepseek-v4.1-flash/assets/'+f['file'] for f in manifest['figures']]}
-            (ROOT/'publication-result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
+            (ROOT/'publication-result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             print(json.dumps(result,ensure_ascii=False,indent=2));return
         except (HTTPError,URLError,RuntimeError) as e:last_error=str(e)
         time.sleep(15)
