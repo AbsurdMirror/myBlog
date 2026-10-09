@@ -16,7 +16,7 @@ def render(text: str) -> str:
         result = subprocess.run(
             ['pandoc', '--from=markdown+tex_math_dollars-implicit_figures',
              '--to=html5', '--mathml', '--no-highlight', '--wrap=none'],
-            input=text, text=True, capture_output=True, check=True, timeout=60)
+            input=text, text=True, encoding='utf-8', capture_output=True, check=True, timeout=60)
     except FileNotFoundError as exc:
         raise RuntimeError('Pandoc is required. Install Pandoc before rendering.') from exc
     if result.stderr.strip():

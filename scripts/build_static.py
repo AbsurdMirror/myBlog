@@ -35,7 +35,7 @@ def main() -> None:
         raise SystemExit('Unsafe output directory')
     subprocess.run(['python',str(ROOT/'scripts/check.py')]+([] if args.preview else ['--published-only']),check=True)
     mode='preview' if args.preview else 'published'
-    pages=json.loads((ROOT/'publication.json').read_text())[mode]
+    pages=json.loads((ROOT/'publication.json').read_text(encoding='utf-8'))[mode]
     page_info=[]
     for rel in pages:
         src=ROOT/'docs'/rel
@@ -84,7 +84,7 @@ def main() -> None:
         target.write_text(page,encoding='utf-8')
     # Safety: pages which were not approved are never copied from docs/.
     (output/'.nojekyll').touch()
-    (output/'404.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>页面未找到</title><h1>页面未找到</h1><p><a href="/myBlog/">返回图解技术笔记</a></p></html>')
+    (output/'404.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>页面未找到</title><h1>页面未找到</h1><p><a href="/myBlog/">返回图解技术笔记</a></p></html>',encoding='utf-8')
     try:
         commit=subprocess.run(['git','rev-parse','HEAD'],cwd=ROOT,text=True,capture_output=True,check=True).stdout.strip()
     except (subprocess.SubprocessError,FileNotFoundError): commit=None
@@ -92,7 +92,7 @@ def main() -> None:
     manifest={'format_version':1,'mode':mode,'source_commit':commit,
               'built_utc':datetime.now(timezone.utc).isoformat(),'pages':[str(Path(p).with_suffix('.html')) for p in pages],
               'legacy_file_count':legacy_count,'files':{str(p.relative_to(output)):{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size} for p in files}}
-    (output/'build-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+    (output/'build-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(f'Built {len(pages)} pages, {len(files)} resources, {legacy_count} legacy files -> {output}')
 
 if __name__=='__main__': main()

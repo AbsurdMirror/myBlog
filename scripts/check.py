@@ -11,7 +11,7 @@ def main():
     args=parser.parse_args()
     mode='published' if args.published_only else 'preview'
     docs=ROOT/'docs'
-    pages=json.loads((ROOT/'publication.json').read_text())[mode]
+    pages=json.loads((ROOT/'publication.json').read_text(encoding='utf-8'))[mode]
     errors=[]
     for rel in pages:
         p=docs/rel
@@ -26,10 +26,10 @@ def main():
             dest=(p.parent/clean).resolve()
             if not dest.is_relative_to(docs.resolve()) or not dest.exists(): errors.append('Broken local reference: '+rel+' -> '+clean)
             if args.published_only and clean.endswith('.md') and dest.exists():
-                if str(dest.relative_to(docs.resolve())) not in pages: errors.append('Published page links to unstaged page: '+clean)
+                if dest.relative_to(docs.resolve()).as_posix() not in pages: errors.append('Published page links to unstaged page: '+clean)
     if True:
         for manifest in docs.rglob('figures.json'):
-            for row in json.loads(manifest.read_text())['figures']:
+            for row in json.loads(manifest.read_text(encoding='utf-8'))['figures']:
                 path=manifest.parent/row['file']
                 if not path.is_file(): errors.append('Missing original PNG: '+str(path.relative_to(ROOT))); continue
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=row['sha256']: errors.append('Changed original PNG: '+row['file'])

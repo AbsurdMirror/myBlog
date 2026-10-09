@@ -2,7 +2,7 @@
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
 status: published
-updated: 2026-10-05
+updated: 2026-10-09
 order: 2
 ---
 
@@ -322,65 +322,224 @@ Attention 与 MoE 的入口各有一套 RMSNorm，合计 **10,240** 个权重。
 
 ## 4. 局部 Attention / SWA
 
-### 4.1 从单路输入生成 Q 与共享 KV
+这一节沿用 mHC 部分的展开方式：先逐步跟踪张量，再给公式与显存账。记 $N=BS$，窗口宽度 $W=128$；输入 $U:[N,5120]$ 已经过 Attention 入口 RMSNorm。
 
-以下 $U:[\mathrm{BxS},5120]$ 已经过 Attention 入口 RMSNorm。Q 与 KV 两条支路读取同一个 U：
+### 4.1 生成 Q、共享 KV 与局部窗口
+
+![图 6：SWA 的 Q、共享 KV、RoPE 与窗口缓存](assets/06_swa_q_kv_window.png)
+
+Q 与 KV 两条支路读取同一个 $U$：
+
+$$
+Q_a=UW_{Qa}^{T},\qquad Q_r=\operatorname{RMSNorm}(Q_a),\qquad
+Q_0=\operatorname{reshape}(Q_rW_{Qb}^{T},[B,S,64,512])
+$$
+
+$$
+C_a=UW_{KV}^{T},\qquad C_r=\operatorname{RMSNorm}(C_a)
+$$
 
 | 步骤 | 权重 / 操作 | 输出 shape |
 |---|---|---|
-| Q 降维 | $W_{Qa}:[1280,5120]$ | `[BxS,1280]` |
-| Q 归一化 | 独立 RMSNorm，gamma 为 `[1280]` | `[BxS,1280]` |
-| Q 展开 | $W_{Qb}:[32768,1280]$，分成 64 头 | `[BxS,64,512]` |
-| KV 投影 | $W_{KV}:[512,5120]$ | `[BxS,512]` |
-| KV 归一化 | 独立 RMSNorm，gamma 为 `[512]` | `[BxS,512]` |
-| 位置编码 | Q 每头、KV 的最后 64 维做 RoPE | shape 不变 |
+| Q 降维 | $W_{Qa}:[1280,5120]$ | `[N,1280]` |
+| Q 归一化 | 独立 RMSNorm，$\gamma_q:[1280]$ | `[N,1280]` |
+| Q 展开 | $W_{Qb}:[32768,1280]$，分成 64 头 | `[B,S,64,512]` |
+| 共享 KV 投影 | $W_{KV}:[512,5120]$ | `[N,512]` |
+| 共享 KV 归一化 | 独立 RMSNorm，$\gamma_{kv}:[512]$ | `[B,S,512]` |
 
-本次生成的 KV 表示为 $C=K=V:[B,S,512]$，由 $64$ 个 Query 头共用。其余 $448$ 维不旋转。第 0 层的局部支路采用基数 $10000$ 的 RoPE。这里不展开 KV 量化与存储布局。[核查：`Attention`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
-
-### 4.2 完整打分、mask、归一化、加权汇总
-
-$S_{\mathrm{his}}$ 表示包含历史与本次 token 的完整逻辑 KV 序列长度。无历史前缀时 $S_{\mathrm{his}}=S$；以下统一按带历史的形状写公式。完整分数矩阵用于说明数学关系，窗口 mask 决定哪些位置实际参与计算，不要求在显存中保存全量历史 KV 或完整分数矩阵。
-
-固定会话 $b$ 和 Query 头 $h$，$Q_{b,h}:[S,512]$，$C_b:[S_{\mathrm{his}},512]$。先计算原始得分 $E$，再加 mask $M$，得到 $L$：
+每个头只有最后 $64$ 维参加 RoPE，前 $448$ 维直通。对一对实数分量 $(x_{2r},x_{2r+1})$，旋转写为：
 
 $$
-E_{b,h}=Q_{b,h}C_b^T/\sqrt{512},\qquad L_{b,h}=E_{b,h}+M_b
+\operatorname{RoPE}_{\theta}
+\begin{bmatrix}x_{2r}\\x_{2r+1}\end{bmatrix}
+=
+\begin{bmatrix}\cos\theta&-\sin\theta\\\sin\theta&\cos\theta\end{bmatrix}
+\begin{bmatrix}x_{2r}\\x_{2r+1}\end{bmatrix}
 $$
 
-$p^Q_{b,i}$ 是本次第 $i$ 个 Query 的绝对位置，$p^{KV}_{b,j}$ 是第 $j$ 个 KV 的绝对位置。窗口 mask 为：
+于是：
 
 $$
-M_{b,i,j}=\begin{cases}0,&0\le p^Q_{b,i}-p^{KV}_{b,j}<128\\-\infty,&\text{其他}\end{cases}
+Q=\operatorname{Concat}\left(Q_0[...,0{:}448],\operatorname{RoPE}(Q_0[...,448{:}512])\right)
 $$
 
-每个 Query 只访问自身及此前最多 $127$ 个位置；在完整序列示意中，对应**主对角线及以下 127 条对角线**。
-
-每个头有一个可学习的 sink 标量 $a_h$，只进入归一化分母，不提供内容。归一化权重 $P$ 与加权汇总 $O$ 为：
-
 $$
-P_{b,h,i,j}=\frac{\exp(L_{b,h,i,j})}{\exp(a_h)+\sum_{k=0}^{S_{\mathrm{his}}-1}\exp(L_{b,h,i,k})},\qquad
-O_{b,h}=P_{b,h}C_b
+C=K=V=\operatorname{Concat}\left(C_r[...,0{:}448],\operatorname{RoPE}(C_r[...,448{:}512])\right)
 $$
 
-| 对象 | 展平 token 后的 shape |
-|---|---|
-| Q | `[BxS,64,512]` |
-| C=K=V | $[B,S_{\mathrm{his}},512]$ |
-| E、L、P | $[\mathrm{BxS},64,S_{\mathrm{his}}]$ |
-| mask | $[B,S,S_{\mathrm{his}}]$，沿头维广播 |
-| O | `[BxS,64,512]` |
-
-真实 token 的权重和不必为 $1$。加权汇总按 $C_b:[S_{\mathrm{his}},512]$ 的排列计算 $P_{b,h}C_b$，得到 $[S,512]$；这里只在同一会话内求和。[核查：`sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
-
-### 4.3 输出恢复与两级分组投影
-
-先对 $O$ 每头的最后 $64$ 维按当前 Query 位置做逆 RoPE，再将 $64$ 个头分为 $8$ 组，每组 $8$ 个头。两级输出投影的形状依次为：
+第 0 层使用基数 $10000$ 的 RoPE；$64$ 个 Query 头共享同一份 $C:[B,S,512]$。推理时，每个会话只保留最近 $128$ 个 KV。令 $S_{\mathrm{cache}}$ 为本轮开始前已有的缓存长度，则概念上的窗口长度和窗口内容可写成：
 
 $$
-[\mathrm{BxS},64,512]\to[\mathrm{BxS},8,4096]\to[\mathrm{BxS},8,1024]\to[\mathrm{BxS},8192]\to[\mathrm{BxS},5120]
+S_{\mathrm{win}}=
+\begin{cases}
+S,&S\ge 128\\
+\min(S_{\mathrm{cache}}+S,128),&S<128
+\end{cases}
 $$
 
-第一级权重整体为 `[8,1024,4096]`，各组独立投影；第二级权重为 `[5120,8192]`，合并各组信息。两级之间没有额外非线性。最终得到单路输出 $Y:[\mathrm{BxS},5120]$，交给当前 Attention 侧的 mHC 融合。
+$$
+C_{\mathrm{win}}=
+\begin{cases}
+C,&S\ge 128\\
+\operatorname{Tail}_{S_{\mathrm{win}}}\!\left(\operatorname{Concat}(C_{\mathrm{cache}},C)\right),&S<128
+\end{cases}
+$$
+
+这里的 $C_{\mathrm{win}}$ 是便于理解的逻辑视图，不是实现必须物化的新张量。上游实现用 `topk_idxs` 直接索引交给 attention kernel 的 KV：prefill 索引当前序列 $C$，同时把末尾 KV 写入环形 `window_kv_cache`；decode 再按从旧到新的顺序索引该缓存的 128 个槽。prefill 为每个 Query 生成至多 $\min(S,128)$ 个因果索引，无效槽填 `-1`。即使此时概念上的 $S_{\mathrm{win}}=S>128$，下一步的窗口 mask 仍保证单个 Query 最多只参与 128 个 KV。[核查：`Attention._window_kv`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)、[`get_window_topk_idxs`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
+
+### 4.2 SWA mask、attention sink 与在线 softmax
+
+![图 7：128-token SWA mask、sink softmax 与共享 V 汇总](assets/07_swa_mask_sink_softmax.png)
+
+固定会话 $b$、Query 头 $h$ 和 Query 位置 $i$。令当前内核实际遍历的候选数为 $K_{\mathrm{idx}}$；prefill 时 $K_{\mathrm{idx}}=\min(S,128)$，decode 时为 $128$。对候选 KV 位置 $j$，原始得分为：
+
+$$
+E_{b,h,i,j}=\frac{Q_{b,i,h}C_{b,j}^{T}}{\sqrt{512}}
+$$
+
+$p^Q_{b,i}$ 与 $p^{KV}_{b,j}$ 分别表示 Query 和 KV 的绝对位置。128-token 因果滑窗的 mask 为：
+
+$$
+M_{b,i,j}=
+\begin{cases}
+0,&0\le p^Q_{b,i}-p^{KV}_{b,j}<128\\
+-\infty,&\text{其他}
+\end{cases},\qquad Z^{\mathrm{attn}}=E+M
+$$
+
+因此每个 Query 只访问自身及此前最多 $127$ 个位置；在完整序列示意中，就是主对角线及其下方 127 条对角线。
+
+每个头还有一个可学习 sink logit $a_h$。它只进入 softmax 分母，不携带 value 内容。直接形式为：
+
+$$
+P_{b,h,i,j}=
+\frac{\exp(Z^{\mathrm{attn}}_{b,h,i,j})}
+{\exp(a_h)+\sum_k\exp(Z^{\mathrm{attn}}_{b,h,i,k})}
+$$
+
+实际内核采用在线、数值稳定的形式。令
+
+$$
+m_{b,h,i}=\max\!\left(a_h,\max_k Z^{\mathrm{attn}}_{b,h,i,k}\right)
+$$
+
+则
+
+$$
+P_{b,h,i,j}=
+\frac{\exp(Z^{\mathrm{attn}}_{b,h,i,j}-m_{b,h,i})}
+{\exp(a_h-m_{b,h,i})+\sum_k\exp(Z^{\mathrm{attn}}_{b,h,i,k}-m_{b,h,i})}
+$$
+
+$$
+O'_{b,i,h}=\sum_j P_{b,h,i,j}C_{b,j}
+$$
+
+因为 sink 吸收了部分概率质量，真实 token 的权重和满足 $\sum_jP_{b,h,i,j}<1$，而不是强制等于 1。内核以 FP32 累积最大值、指数和及输出，再写回 BF16；$E$、$Z^{\mathrm{attn}}$、$P$ 都只是逻辑上的分块，不会完整落到全局显存。[核查：`sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
+
+| 对象 | 逻辑 shape | 实现说明 |
+|---|---|---|
+| Q | `[B,S,64,512]` | BF16 |
+| 窗口 KV | `[B,K_idx,512]` | 由索引从环形缓存 gather |
+| `topk_idxs` | `[B,S,K_idx]` | INT32，`-1` 表示无效槽 |
+| $E,Z^{\mathrm{attn}},P$ | `[B,S,64,K_idx]` | FP32 分块 / 在线计算，不完整物化 |
+| $O'$ | `[B,S,64,512]` | BF16 |
+
+### 4.3 逆 RoPE 与两级分组输出投影
+
+![图 8：逆 RoPE 与两级分组输出投影](assets/08_swa_output_projection.png)
+
+先按当前 Query 位置撤销每个头最后 $64$ 维的旋转。逆变换等价于使用共轭频率，即 $\operatorname{RoPE}_{-\theta}$：
+
+$$
+\operatorname{RoPE}^{-1}_{\theta}=
+\begin{bmatrix}\cos\theta&\sin\theta\\-\sin\theta&\cos\theta\end{bmatrix}
+$$
+
+$$
+O_r=\operatorname{Concat}\left(O'[...,0{:}448],\operatorname{RoPE}^{-1}(O'[...,448{:}512])\right)
+$$
+
+随后把 $64$ 个头分成 $8$ 组，每组 $8$ 个头：
+
+$$
+O_g=\operatorname{reshape}(O_r,[N,8,4096])
+$$
+
+第一级由 8 组独立权重完成：
+
+$$
+O_a[n,g,:]=O_g[n,g,:]W_{oa,g}^{T},\qquad
+W_{oa}:[8,1024,4096]
+$$
+
+第二级先把 8 组展平为 $8192$ 维，再合并回模型宽度：
+
+$$
+O=\operatorname{reshape}(O_a,[N,8192])W_{ob}^{T},\qquad
+W_{ob}:[5120,8192]
+$$
+
+完整形状链为：
+
+$$
+[N,64,512]\to[N,8,4096]\to[N,8,1024]\to[N,8192]\to[N,5120]
+$$
+
+两级之间没有额外非线性。最终单路输出 $O:[N,5120]$ 交给当前 Attention 侧的 mHC 融合。[核查：`Attention.forward`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+
+### 4.4 参数量与最低全局显存
+
+先区分两个口径：**逻辑参数量**统计模型中有多少个标量；**驻留字节数**按参考实现实际的 GPU dtype 和 FP8 scale 计算。SWA 的逻辑参数量仍是第 6 节汇总所用的 **126,617,408**：
+
+| 参数 | shape | 逻辑参数量 |
+|---|---|---:|
+| $W_{Qa}$ | `[1280,5120]` | 6,553,600 |
+| $\gamma_q$ | `[1280]` | 1,280 |
+| $W_{Qb}$ | `[32768,1280]` | 41,943,040 |
+| $W_{KV}$ | `[512,5120]` | 2,621,440 |
+| $\gamma_{kv}$ | `[512]` | 512 |
+| sink $a$ | `[64]` | 64 |
+| $W_{oa}$ | `[8,1024,4096]` | 33,554,432 |
+| $W_{ob}$ | `[5120,8192]` | 41,943,040 |
+| **合计** |  | **126,617,408** |
+
+参考实现默认 FP8 权重使用 E4M3 数据与按 $32\times32$ block 存放的 E8M0 scale；两个 RMSNorm 权重为 BF16，sink 为 FP32，$W_{oa}$ 为 BF16。对应驻留字节为：
+
+| 驻留对象 | GPU 存储 | 字节数 |
+|---|---|---:|
+| $W_{Qa}$ | FP8 + E8M0 scale | 6,560,000 |
+| $\gamma_q$ | BF16 | 2,560 |
+| $W_{Qb}$ | FP8 + E8M0 scale | 41,984,000 |
+| $W_{KV}$ | FP8 + E8M0 scale | 2,624,000 |
+| $\gamma_{kv}$ | BF16 | 1,024 |
+| sink $a$ | FP32 | 256 |
+| $W_{oa}$ | BF16 | 67,108,864 |
+| $W_{ob}$ | FP8 + E8M0 scale | 41,984,000 |
+| **参数与 scale 合计** |  | **160,264,704 B（约 152.84 MiB）** |
+
+令 $B_{\max}$ 为预分配最大 batch，$S_{\max}$ 为 RoPE 表覆盖的最大位置。持续状态还包括 BF16 `window_kv_cache:[B_max,128,512]`，占 $131072B_{\max}$ 字节；以及 `freqs_cis:[S_max,32]` 的 Complex64 表，占 $256S_{\max}$ 字节。最后的 32 来自 $64$ 个实数 RoPE 维两两组成复数。
+
+若只计算该 SWA 模块完成一次前向所必需的全局显存，并假设理想融合/tiling 让 Q、分数、概率和中间投影停留在寄存器或共享内存，则需要长期保留的动态张量只有 BF16 输入与输出，各占 $10240N$ 字节。因此理论下界为：
+
+$$
+M_{\min}=152.84\,\mathrm{MiB}+20\,\mathrm{KiB}\cdot N
++128\,\mathrm{KiB}\cdot B_{\max}
++0.25\,\mathrm{KiB}\cdot S_{\max}
+$$
+
+这不是进程实际峰值显存：它不包含框架上下文、allocator 保留区、kernel workspace，也不要求完整物化下面这些中间量：
+
+| 中间量 | dtype | 若完整物化的字节数 |
+|---|---|---:|
+| $Q_a$ 或 $Q_r:[N,1280]$ | BF16 | $2560N$ |
+| $Q$ 或 $O':[B,S,64,512]$ | BF16 | $65536N$ |
+| $C:[B,S,512]$ | BF16 | $1024N$ |
+| `topk_idxs:[B,S,K_idx]` | INT32 | $4NK_{\mathrm{idx}}$ |
+| $E$、$Z^{\mathrm{attn}}$ 或 $P:[B,S,64,K_{\mathrm{idx}}]$ | FP32 | 每个 $256NK_{\mathrm{idx}}$ |
+| $O_a:[B,S,8,1024]$ | BF16 | $16384N$ |
+
+当前参考路径先对 $C$ 做原地 FP8 量化—反量化模拟，再把结果以 BF16 写入窗口缓存；因此这里按 BF16 cache 计数。`freqs_cis` 还可被 RoPE 配置相同的层共享，做整模型汇总时不应逐层重复计算。[核查：`act_quant(inplace=True)` 与 `sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)
 
 ## 5. MoE 前馈计算
 
@@ -437,7 +596,7 @@ $$
 
 单专家参数量为 $3\times5120\times2304=35389440$；MoE 合计 $385\times35389440+384\times5120+2\times384$，分别对应 $384+1$ 个专家、路由投影和两套修正向量。每个 token 只激活 $6$ 个路由专家与 $1$ 个共享专家，总参数量不等于当次激活参数量。
 
-本层向下一层输出四路残差 `[BxS,4,5120]` 和 `pre_next:[BxS,4]`；后者供下一层 Attention 入口汇聚使用。对 $B$ 个会话，本层局部 KV 缓存的逻辑容量为 `[B,128,512]`，没有独立的全局缓存；其字节占用需结合缓存实际数据类型计算。
+本层向下一层输出四路残差 `[BxS,4,5120]` 和 `pre_next:[BxS,4]`；后者供下一层 Attention 入口汇聚使用。对 $B$ 个会话，本层局部 KV 缓存的逻辑容量为 `[B,128,512]`，没有独立的全局缓存；当前参考路径以 BF16 保存，单会话占 $128\times512\times2=131072$ 字节。
 
 ## 7. 资料来源与版本说明
 
@@ -447,4 +606,4 @@ $$
 - [模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)：RMSNorm、Attention、Gate、Expert、MoE、Block。
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
-资料核查日期为 2026-10-05。引用使用上游 `main` 链接，尚未锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示的维度与公式以相邻正文为准。
+全文资料初次核查日期为 2026-10-05；本轮 SWA 增补于 2026-10-09 对照上游 `main` 页面所示 revision `517ef62` 复核。文内链接仍指向 `main`，全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。

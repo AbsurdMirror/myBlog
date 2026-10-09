@@ -63,6 +63,43 @@
       "notes": [
         "右侧固定输出j应读取全部4路Xi；post_j广播形状为[B*S,1]。"
       ]
+    },
+    {
+      "id": "layer0-06",
+      "file": "06_swa_q_kv_window.png",
+      "sha256": "442a29ee70e2390d196b2841f7553bba685b2c282ba5a63d7d8812f3dfb2aa78",
+      "bytes": 1559159,
+      "width": 1819,
+      "height": 865,
+      "selection": "user-selected",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "图中的C_win是逻辑视图；prefill通过topk_idxs索引当前C并更新环形缓存，decode再索引缓存，不要求完整物化C_win。"
+      ]
+    },
+    {
+      "id": "layer0-07",
+      "file": "07_swa_mask_sink_softmax.png",
+      "sha256": "b9fb93894b30d1d65a9c864dd6b37da53f19ab23e89e1b98e77745d7070da358",
+      "bytes": 1340323,
+      "width": 2048,
+      "height": 682,
+      "selection": "user-selected",
+      "semantic_review": "reviewed",
+      "notes": [
+        "正文用绝对位置定义SWA mask，并补充数值稳定的在线sink softmax。"
+      ]
+    },
+    {
+      "id": "layer0-08",
+      "file": "08_swa_output_projection.png",
+      "sha256": "53e732b7e8fe2b6374894f1048594f55fa32aa69c5c02cbaf8033575c0a8f953",
+      "bytes": 1208838,
+      "width": 2048,
+      "height": 682,
+      "selection": "user-selected",
+      "semantic_review": "reviewed",
+      "notes": []
     }
   ]
 }

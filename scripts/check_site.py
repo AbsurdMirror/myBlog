@@ -17,10 +17,10 @@ class Links(HTMLParser):
         if tag=='img': self.images.append(a.get('src',''))
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--site',default='site');args=ap.parse_args()
-    site=(ROOT/args.site).resolve(); manifest=json.loads((site/'build-manifest.json').read_text())
+    site=(ROOT/args.site).resolve(); manifest=json.loads((site/'build-manifest.json').read_text(encoding='utf-8'))
     errors=[];parsed={}
     for rel in manifest['pages']:
-        path=site/rel;p=Links();p.feed(path.read_text());parsed[path.resolve()]=p
+        path=site/rel;p=Links();p.feed(path.read_text(encoding='utf-8'));parsed[path.resolve()]=p
     for path,p in parsed.items():
         for link in p.links:
             u=urlsplit(link)
@@ -38,14 +38,15 @@ def main():
                 errors.append(f'{path.name}: missing anchor {link}')
     layer=site/'models/deepseek-v4.1-flash/02-layer0.html'
     fig_manifest=ROOT/'docs/models/deepseek-v4.1-flash/assets/figures.json'
+    figures=json.loads(fig_manifest.read_text(encoding='utf-8'))['figures']
     if layer.exists():
         p=parsed[layer.resolve()]
-        if len(p.images)!=5:errors.append('Layer 0 must include five original diagrams')
+        if len(p.images)!=len(figures):errors.append(f'Layer 0 must include {len(figures)} original diagrams')
         if p.math<60:errors.append('Missing MathML formulas')
-        for f in json.loads(fig_manifest.read_text())['figures']:
+        for f in figures:
             path=layer.parent/'assets'/f['file']
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=f['sha256']:
                 errors.append('Missing/changed deployed image '+f['file'])
     if errors:raise SystemExit('\n'.join(errors))
-    print(f'PASS: {len(parsed)} pages, local URLs and anchors, five SHA256-identical diagrams; '+str(sum(p.math for p in parsed.values()))+' MathML nodes')
+    print(f'PASS: {len(parsed)} pages, local URLs and anchors, {len(figures)} SHA256-identical diagrams; '+str(sum(p.math for p in parsed.values()))+' MathML nodes')
 if __name__=='__main__':main()
