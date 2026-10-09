@@ -32,7 +32,7 @@
 <td><a href="02-layer0.html">② Layer 0：基准层详解</a></td>
 <td>八模块、四路残差、mHC、RMSNorm、SWA、MoE；公式、shape、参数与状态</td>
 <td>先了解本文符号；①完成后建议先读①</td>
-<td>已发布，含五张原图；持续修订</td>
+<td>已发布，含八张原图；持续修订</td>
 </tr>
 <tr class="odd">
 <td>③ 其他层的差异</td>
@@ -97,5 +97,5 @@
 </table>
 <p>完整序列示例明确 <code>S_his=S</code>；带历史缓存的场景另行声明。可学习权重、运行时系数和固定常数分别说明。</p>
 <h2 id="第②篇的配图进度">第②篇的配图进度</h2>
-<p>现有五张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张。RMSNorm、SWA、MoE 专用图待后续讨论后补充，继续归入第②篇。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-04<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<p>现有八张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张，以及 SWA 的 Q/KV 窗口、mask 与 sink softmax、输出投影三张。RMSNorm、MoE 专用图待后续讨论后补充，继续归入第②篇。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-09<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

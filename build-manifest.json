@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "f59b299e41eab8c51a94ac23b23dfd6ad5503caf",
-  "built_utc": "2026-10-05T14:29:54.194997+00:00",
+  "source_commit": "6d02321ab7281f1e34df535651ee66c604f8c587",
+  "built_utc": "2026-10-09T03:11:36.407869+00:00",
   "pages": [
     "index.html",
     "models/deepseek-v4.1-flash/index.html",
@@ -16,8 +16,8 @@
       "bytes": 0
     },
     "index.html": {
-      "sha256": "0b63b09071f1178346ee8fd4bdf6ffda3fe6e6575e70cb480623395f22982407",
-      "bytes": 2788
+      "sha256": "007c7fd9e15db6cb86cfd35c2b5775a2e5fdd454e2287edfa3de2e857bba94d1",
+      "bytes": 2813
     },
     "404.html": {
       "sha256": "146d6ae69b10385fdadbc5a55a5b55115c13d6a40a05728b2bad212572d13ae2",
@@ -68,16 +68,20 @@
       "bytes": 224710
     },
     "models/deepseek-v4.1-flash/index.html": {
-      "sha256": "91be88aa812969f74dc68e0e2363594b4ab9e668cedce54df1118d69d4cb8c02",
-      "bytes": 6326
+      "sha256": "16be5f9256a85990fe6d5569e302a1ac621596091404a4355b9f89e696144de9",
+      "bytes": 6394
     },
     "models/deepseek-v4.1-flash/02-layer0.html": {
-      "sha256": "5867c19629fab177a985c47e683b9cfbf6827c00a85aae4f71586ba7afc84c12",
-      "bytes": 129924
+      "sha256": "fbf49d60ba0e81eccae0564cd0bd0a58ce8d60383974a80ec316f7c470d4c84a",
+      "bytes": 162752
     },
     "models/deepseek-v4.1-flash/assets/01_layer0_overview.png": {
       "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4",
       "bytes": 1372471
+    },
+    "models/deepseek-v4.1-flash/assets/06_swa_q_kv_window.png": {
+      "sha256": "442a29ee70e2390d196b2841f7553bba685b2c282ba5a63d7d8812f3dfb2aa78",
+      "bytes": 1559159
     },
     "models/deepseek-v4.1-flash/assets/05_mhc_hc_post.png": {
       "sha256": "457a6e636beffc5d3cd6cccb8d05b62b10c2597598d9e72c26f94e7bf12c0c84",
@@ -91,9 +95,17 @@
       "sha256": "389a9cba4f46d3629d41987f7ef573a72326b3ae4bdcc3fc528e2d5b59927caf",
       "bytes": 1883417
     },
+    "models/deepseek-v4.1-flash/assets/08_swa_output_projection.png": {
+      "sha256": "53e732b7e8fe2b6374894f1048594f55fa32aa69c5c02cbaf8033575c0a8f953",
+      "bytes": 1208838
+    },
     "models/deepseek-v4.1-flash/assets/04_mhc_hc_pre.png": {
       "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5",
       "bytes": 1768649
+    },
+    "models/deepseek-v4.1-flash/assets/07_swa_mask_sink_softmax.png": {
+      "sha256": "b9fb93894b30d1d65a9c864dd6b37da53f19ab23e89e1b98e77745d7070da358",
+      "bytes": 1340323
     },
     "_static/site.css": {
       "sha256": "019b555bcfa9b972669a4fd15440940671e29781b051c15875283686718494d1",
