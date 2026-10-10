@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "6d02321ab7281f1e34df535651ee66c604f8c587",
-  "built_utc": "2026-10-09T03:11:36.407869+00:00",
+  "source_commit": "87ea094a194b1b2b1cc4bf0a5b5da4b38d56f0bf",
+  "built_utc": "2026-10-10T05:33:11.954513+00:00",
   "pages": [
     "index.html",
     "models/deepseek-v4.1-flash/index.html",
@@ -16,8 +16,8 @@
       "bytes": 0
     },
     "index.html": {
-      "sha256": "007c7fd9e15db6cb86cfd35c2b5775a2e5fdd454e2287edfa3de2e857bba94d1",
-      "bytes": 2813
+      "sha256": "a727c184d712f9533c967c9d4a142c98d71910702e652a62c3b14a186ad0d838",
+      "bytes": 2823
     },
     "404.html": {
       "sha256": "146d6ae69b10385fdadbc5a55a5b55115c13d6a40a05728b2bad212572d13ae2",
@@ -68,12 +68,12 @@
       "bytes": 224710
     },
     "models/deepseek-v4.1-flash/index.html": {
-      "sha256": "16be5f9256a85990fe6d5569e302a1ac621596091404a4355b9f89e696144de9",
-      "bytes": 6394
+      "sha256": "6e4eb0ca68b8bb148417c42d5de87948901d3447f67fb869cd2cab8e81090cbc",
+      "bytes": 6401
     },
     "models/deepseek-v4.1-flash/02-layer0.html": {
-      "sha256": "fbf49d60ba0e81eccae0564cd0bd0a58ce8d60383974a80ec316f7c470d4c84a",
-      "bytes": 162752
+      "sha256": "4e5b0ceffc3e972141bb73a3fa8fc7798ff4315f019be6dcceef9d0b58cdf4e8",
+      "bytes": 180706
     },
     "models/deepseek-v4.1-flash/assets/01_layer0_overview.png": {
       "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4",
@@ -102,6 +102,10 @@
     "models/deepseek-v4.1-flash/assets/04_mhc_hc_pre.png": {
       "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5",
       "bytes": 1768649
+    },
+    "models/deepseek-v4.1-flash/assets/09_rmsnorm_forward.png": {
+      "sha256": "e9b876902f2a3f4e57e3911275d25e697d98c97b9fa2fdbbb4603bffa49992ce",
+      "bytes": 2077232
     },
     "models/deepseek-v4.1-flash/assets/07_swa_mask_sink_softmax.png": {
       "sha256": "b9fb93894b30d1d65a9c864dd6b37da53f19ab23e89e1b98e77745d7070da358",
