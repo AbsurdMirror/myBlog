@@ -2,7 +2,7 @@
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
 status: published
-updated: 2026-10-09
+updated: 2026-10-10
 order: 2
 ---
 
@@ -312,13 +312,111 @@ $$
 
 ## 3. 两个入口 RMSNorm
 
-RMSNorm 接收四路汇聚得到的单路输入 $Z$，输出 $U$，两者形状均为 `[BxS,5120]`。$\gamma:[5120]$ 是可学习权重，没有加法偏置；每个 token 沿 $5120$ 维独立归一化：
+Layer 0 有两套互不共享参数的入口 RMSNorm：一套位于第一次 `hc_pre` 与 Attention 之间，另一套位于第二次 `hc_pre` 与 MoE 之间。两次输入都是四路汇聚后的单路张量，shape 均为 `[B,S,5120]`；记 $N=BS$，以下先分析其中一套。
+
+![图 6：5120 维 RMSNorm 的四步计算](assets/09_rmsnorm_forward.png)
+
+### 3.1 四步前向计算与精度
+
+图中用 $X$ 表示入口张量、$Y$ 表示输出；对应前文符号时，就是 $X=Z$、$Y=U$。参考实现先记住输入 dtype，再把计算提升到 FP32：
 
 $$
-U_{t,d}=\gamma_d Z_{t,d}\left(\frac{1}{5120}\sum_{k=0}^{5119}Z_{t,k}^2+10^{-20}\right)^{-1/2}
+\widehat X=\operatorname{float}(X),\qquad X:[N,5120]
 $$
 
-Attention 与 MoE 的入口各有一套 RMSNorm，合计 **10,240** 个权重。它不减均值；前述 mHC 的 RMS 因子则统计四路展平后的 $20480$ 维，且没有独立的 $\gamma$。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+第一步，对每个 token 独立计算 5120 维上的**均方值**，不减均值：
+
+$$
+m_i=\frac{1}{5120}\sum_{j=0}^{5119}\widehat X_{ij}^{\,2},\qquad m:[N,1]
+$$
+
+第二步，加固定常数 $\epsilon=10^{-20}$，再计算动态缩放因子：
+
+$$
+r_i=\frac{1}{\sqrt{m_i+\epsilon}},\qquad r:[N,1]
+$$
+
+第三步把 $r_i$ 沿特征维广播，完成逐元素归一化；第四步乘可学习权重 $\gamma:[5120]$：
+
+$$
+X'_{ij}=\widehat X_{ij}r_i,\qquad
+Y_{ij}=X'_{ij}\gamma_j
+$$
+
+最后把 $Y$ 转回输入 dtype。当前参考推理路径的输入、输出和 $\gamma$ 为 BF16，均方、`rsqrt`、归一化及权重缩放在 FP32 表达中完成。$\gamma$ 是唯一的可学习参数，没有 bias；$\epsilon$ 是固定常数，不计入参数量。[核查：`RMSNorm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+
+### 3.2 参数量与前向计算量
+
+一套 5120 维 RMSNorm 只有一个缩放向量：
+
+| 参数 | shape | 数量 | BF16 驻留字节 |
+|---|---|---:|---:|
+| $\gamma$ | `[5120]` | 5,120 | 10,240 B（10 KiB） |
+
+Attention 前和 MoE 前各有一套独立的 $\gamma$，所以 Layer 0 的两个入口 RMSNorm 合计 **10,240 个逻辑参数、20 KiB 权重**。
+
+下面给出一套 RMSNorm 处理一个 token 的算法级标量运算数。加法和乘法各计 1 次；均值中的除以 5120 按一次常数乘法计；`rsqrt` 单列，dtype 转换不计：
+
+| 阶段 | 加法 / 乘法 | `rsqrt` |
+|---|---:|---:|
+| 平方、求和、乘 $1/5120$、加 $\epsilon$ | $5120+5119+1+1=10241$ | 1 |
+| $X'_{ij}=\widehat X_{ij}r_i$ | 5,120 | 0 |
+| $Y_{ij}=X'_{ij}\gamma_j$ | 5,120 | 0 |
+| **一 token 合计** | **20,481** | **1** |
+
+因此一套处理 $N=BS$ 个 token 时：
+
+$$
+C_{\mathrm{RMSNorm}}=20481N\ \text{次标量加法/乘法}+N\ \text{次 rsqrt}
+$$
+
+Layer 0 两套合计：
+
+$$
+C_{\mathrm{Layer0\ Norm}}=40962N\ \text{次标量加法/乘法}+2N\ \text{次 rsqrt}
+$$
+
+这是按数学步骤统计的运算量，不等同于 GPU 指令数或执行时间；实际 kernel 会融合归约、广播和逐元素乘法。
+
+### 3.3 张量生命周期与最低全局显存
+
+一套 RMSNorm 的逻辑张量如下。内部 FP32 张量用于说明计算与上界，不代表实现必须把它们完整写入 Global Memory：
+
+| Tensor | 分类 | shape | dtype | 若完整物化的字节数 |
+|---|---|---|---|---:|
+| $\gamma$ | Weight | `[5120]` | BF16 | 10,240 |
+| $X$ | Input | `[N,5120]` | BF16 | $10240N$ |
+| $\widehat X$ | Internal | `[N,5120]` | FP32 | $20480N$ |
+| $m$ | Internal | `[N,1]` | FP32 | $4N$ |
+| $r$ | Internal | `[N,1]` | FP32 | $4N$ |
+| $X'$ | Internal | `[N,5120]` | FP32 | $20480N$ |
+| $Y$ | Output | `[N,5120]` | BF16 | $10240N$ |
+
+若只统计参数、输入和输出，并假设融合/tiling 让 $\widehat X,m,r,X'$ 停留在寄存器或共享内存，一套 RMSNorm 的最低所需 Global Memory 为：
+
+$$
+\boxed{
+M_{\mathrm{RMSNorm}}(B,S)=10\,\mathrm{KiB}+20\,\mathrm{KiB}\cdot BS
+}
+$$
+
+Layer 0 的两套 $\gamma$ 会同时随模型驻留，合计 20 KiB；但两次 RMSNorm 按执行顺序发生，输入/输出工作区可以复用。因此仅就这两个 Norm 自身并按理想复用计算，最低**同时驻留**量是：
+
+$$
+\boxed{
+M_{\mathrm{Layer0\ Norm,min}}(B,S)=20\,\mathrm{KiB}+20\,\mathrm{KiB}\cdot BS
+}
+$$
+
+这不是进程峰值显存，也不是显存读写流量；框架上下文、allocator 保留区、kernel workspace 和未融合的 FP32 中间量都可能提高实测值。
+
+### 3.4 与 LayerNorm、mHC RMS 因子的区别
+
+- RMSNorm 只按平方均值缩放，不减均值，也没有 LayerNorm 的可学习偏置 $\beta$。
+- 本节入口 RMSNorm 沿单路 $5120$ 维统计，并乘独立的 $\gamma:[5120]$。
+- 第 2 节 mHC 的 RMS 因子沿四路展平后的 $4\times5120=20480$ 维统计，只服务于动态系数投影，没有独立的 $\gamma$。
+
+两套入口 Norm 的位置和调用顺序可直接在 `Block.forward` 中看到：`hc_pre → attn_norm → Attention`，随后是 `hc_pre → ffn_norm → MoE`。[核查：`Block`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
 
 ## 4. 局部 Attention / SWA
 
@@ -326,7 +424,7 @@ Attention 与 MoE 的入口各有一套 RMSNorm，合计 **10,240** 个权重。
 
 ### 4.1 生成 Q、共享 KV 与局部窗口
 
-![图 6：SWA 的 Q、共享 KV、RoPE 与窗口缓存](assets/06_swa_q_kv_window.png)
+![图 7：SWA 的 Q、共享 KV、RoPE 与窗口缓存](assets/06_swa_q_kv_window.png)
 
 Q 与 KV 两条支路读取同一个 $U$：
 
@@ -389,7 +487,7 @@ $$
 
 ### 4.2 SWA mask、attention sink 与在线 softmax
 
-![图 7：128-token SWA mask、sink softmax 与共享 V 汇总](assets/07_swa_mask_sink_softmax.png)
+![图 8：128-token SWA mask、sink softmax 与共享 V 汇总](assets/07_swa_mask_sink_softmax.png)
 
 固定会话 $b$、Query 头 $h$ 和 Query 位置 $i$。令当前内核实际遍历的候选数为 $K_{\mathrm{idx}}$；prefill 时 $K_{\mathrm{idx}}=\min(S,128)$，decode 时为 $128$。对候选 KV 位置 $j$，原始得分为：
 
@@ -447,7 +545,7 @@ $$
 
 ### 4.3 逆 RoPE 与两级分组输出投影
 
-![图 8：逆 RoPE 与两级分组输出投影](assets/08_swa_output_projection.png)
+![图 9：逆 RoPE 与两级分组输出投影](assets/08_swa_output_projection.png)
 
 先按当前 Query 位置撤销每个头最后 $64$ 维的旋转。逆变换等价于使用共轭频率，即 $\operatorname{RoPE}_{-\theta}$：
 
@@ -606,4 +704,4 @@ $$
 - [模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)：RMSNorm、Attention、Gate、Expert、MoE、Block。
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
-全文资料初次核查日期为 2026-10-05；本轮 SWA 增补于 2026-10-09 对照上游 `main` 页面所示 revision `517ef62` 复核。文内链接仍指向 `main`，全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。
+全文资料初次核查日期为 2026-10-05；SWA 与 RMSNorm 增补分别于 2026-10-09、2026-10-10 对照上游 `main` 页面所示 revision `517ef62` 复核。文内链接仍指向 `main`，全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。

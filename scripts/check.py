@@ -35,8 +35,12 @@ def main():
                 if hashlib.sha256(path.read_bytes()).hexdigest()!=row['sha256']: errors.append('Changed original PNG: '+row['file'])
     # Derived scalar-count tests, not a claim of model-level correctness.
     mhc=24*20480+24+3
+    rmsnorm=5120+(5120-1)+1+1+5120+5120
+    rmsnorm_params=5120
+    rmsnorm_param_bytes=rmsnorm_params*2
     swa=5120*1280+1280+1280*32768+5120*512+512+64+8*4096*1024+8192*5120
     moe=385*3*5120*2304+384*5120+2*384
+    assert (rmsnorm,2*rmsnorm_params,rmsnorm_param_bytes)==(20481,10240,10240)
     assert (mhc,swa,moe)==(491547,126617408,13626901248)
     assert 2*mhc+2*5120+swa+moe==13754511990
     if errors: raise SystemExit('\n'.join(errors))

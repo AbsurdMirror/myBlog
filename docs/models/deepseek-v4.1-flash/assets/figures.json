@@ -100,6 +100,19 @@
       "selection": "user-selected",
       "semantic_review": "reviewed",
       "notes": []
+    },
+    {
+      "id": "layer0-09",
+      "file": "09_rmsnorm_forward.png",
+      "sha256": "e9b876902f2a3f4e57e3911275d25e697d98c97b9fa2fdbbb4603bffa49992ce",
+      "bytes": 2077232,
+      "width": 1367,
+      "height": 1150,
+      "selection": "user-selected",
+      "semantic_review": "reviewed",
+      "notes": [
+        "正文补充FP32内部计算、BF16输入输出与gamma，以及两套入口Norm的参数和显存复用口径。"
+      ]
     }
   ]
 }
