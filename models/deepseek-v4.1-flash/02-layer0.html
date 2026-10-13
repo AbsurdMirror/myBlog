@@ -1056,29 +1056,365 @@ M_{\min}=152.84\,\mathrm{MiB}+20\,\mathrm{KiB}\cdot N
 </table>
 <p>当前参考路径先对 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math> 做原地 FP8 量化—反量化模拟，再把结果以 BF16 写入窗口缓存；因此这里按 BF16 cache 计数。<code>freqs_cis</code> 还可被 RoPE 配置相同的层共享，做整模型汇总时不应逐层重复计算。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">核查：<code>act_quant(inplace=True)</code> 与 <code>sparse_attn</code></a></p>
 <h2 id="moe-前馈计算">5. MoE 前馈计算</h2>
-<h3 id="选择-6-个路由专家">5.1 选择 6 个路由专家</h3>
-<p>MoE 的输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[\mathrm{BxS},5120]</annotation></semantics></math> 已经过 MoE 入口 RMSNorm。本配置有 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 个路由专家，每个 token 选择其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>6</mn><annotation encoding="application/x-tex">6</annotation></semantics></math> 个，另外计算 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1</mn><annotation encoding="application/x-tex">1</annotation></semantics></math> 个共享专家；路由温度为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1</mn><annotation encoding="application/x-tex">1</annotation></semantics></math>，融合权重的缩放系数为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1.5</mn><annotation encoding="application/x-tex">1.5</annotation></semantics></math>。</p>
-<p>路由投影权重为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>R</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_R:[384,5120]</annotation></semantics></math>。修正向量 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b:[384]</annotation></semantics></math> 只影响专家选择，融合权重仍使用原始正数评分 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>R</mi><annotation encoding="application/x-tex">R</annotation></semantics></math>：</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>=</mo><msqrt><mrow><mo>Softplus</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><msubsup><mi>W</mi><mi>R</mi><mi>T</mi></msubsup><mo stretchy="true" form="postfix">)</mo></mrow></mrow></msqrt><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>I</mi><mi>t</mi></msub><mo>=</mo><msub><mo>TopKIndices</mo><mn>6</mn></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>R</mi><mi>t</mi></msub><mo>+</mo><mi>b</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
-R=\sqrt{\operatorname{Softplus}(UW_R^T)},\qquad I_t=\operatorname{TopKIndices}_{6}(R_t+b)
+<p>这一节继续沿用前文的展开方式：先跟踪 Router、专家参数索引和专家计算，再核算参数、计算量与最低全局显存。记</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi><mo>,</mo><mspace width="2.0em"></mspace><mi>H</mi><mo>=</mo><mn>5120</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>M</mi><mo>=</mo><mn>2304</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>E</mi><mo>=</mo><mn>384</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><mo>=</mo><mn>6</mn></mrow><annotation encoding="application/x-tex">
+N=BS,\qquad H=5120,\qquad M=2304,\qquad E=384,\qquad K=6
 </annotation></semantics></math></p>
-<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mo>,</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">R:[\mathrm{BxS},384]</annotation></semantics></math> 是专家评分，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>I</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">I:[\mathrm{BxS},6]</annotation></semantics></math> 是选中的专家索引。取出对应评分，归一化后乘以 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1.5</mn><annotation encoding="application/x-tex">1.5</annotation></semantics></math>，得到融合权重 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math>：</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>g</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub><mo>=</mo><mn>1.5</mn><mfrac><msub><mi>R</mi><mrow><mi>t</mi><mo>,</mo><msub><mi>I</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub></mrow></msub><mrow><munderover><mo>∑</mo><mrow><mo>ℓ</mo><mo>=</mo><mn>0</mn></mrow><mn>5</mn></munderover><msub><mi>R</mi><mrow><mi>t</mi><mo>,</mo><msub><mi>I</mi><mrow><mi>t</mi><mo>,</mo><mo>ℓ</mo></mrow></msub></mrow></msub><mo>+</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>20</mn></mrow></msup></mrow></mfrac></mrow><annotation encoding="application/x-tex">
-g_{t,k}=1.5\frac{R_{t,I_{t,k}}}{\sum_{\ell=0}^{5}R_{t,I_{t,\ell}}+10^{-20}}
+<p>输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mi>H</mi><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X:[N,H]</annotation></semantics></math> 已经过 MoE 入口 RMSNorm。每个 token 从 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 个 routed experts 中选择 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>6</mn><annotation encoding="application/x-tex">6</annotation></semantics></math> 个，同时无条件执行 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1</mn><annotation encoding="application/x-tex">1</annotation></semantics></math> 个 shared expert；所有专家都是无投影偏置的截断 SwiGLU。</p>
+<h3 id="routertop-6-选择与路由权重">5.1 Router：Top-6 选择与路由权重</h3>
+<p><img src="assets/10_moe_router.png" alt="图 10：Sqrt-Softplus Router、文本/视觉修正量与 Top-6" /></p>
+<p>Router 先用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>g</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_g:[384,5120]</annotation></semantics></math> 计算 logits。参考实现把输入和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>g</mi></msub><annotation encoding="application/x-tex">W_g</annotation></semantics></math> 转成 FP32 后再执行这次投影；本配置温度 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\tau=1</annotation></semantics></math>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mo>=</mo><mfrac><mrow><mi>X</mi><msubsup><mi>W</mi><mi>g</mi><mi>𝖳</mi></msubsup></mrow><mi>τ</mi></mfrac><mo>,</mo><mspace width="2.0em"></mspace><mi>S</mi><mo>=</mo><msqrt><mrow><mo>Softplus</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>L</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow></msqrt><mo>,</mo><mspace width="2.0em"></mspace><mi>L</mi><mo>,</mo><mi>S</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+L=\frac{XW_g^{\mathsf T}}{\tau},\qquad
+S=\sqrt{\operatorname{Softplus}(L)},\qquad
+L,S:[N,384]
 </annotation></semantics></math></p>
-<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">g:[\mathrm{BxS},6]</annotation></semantics></math>，每个 token 的融合权重和约为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1.5</mn><annotation encoding="application/x-tex">1.5</annotation></semantics></math>。本文文本路径使用 <code>bias</code>；模型另外保留图像路径使用的修正向量 <code>bias_vl</code>。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Gate</code></a></p>
-<h3 id="每个专家的带截断-swiglu">5.2 每个专家的带截断 SwiGLU</h3>
-<p>路由专家只处理分配给自己的 token。下面定义单个专家对输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>U</mi><annotation encoding="application/x-tex">U</annotation></semantics></math> 的变换；每个专家有独立的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mn>1</mn></msub><mo>,</mo><msub><mi>W</mi><mn>3</mn></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>2304</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_1,W_3:[2304,5120]</annotation></semantics></math> 与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mn>2</mn></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo>,</mo><mn>2304</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">W_2:[5120,2304]</annotation></semantics></math>，没有投影偏置：</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>F</mi><mi>e</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><mo>SiLU</mo><mrow><mo stretchy="true" form="prefix">(</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><msubsup><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>e</mi></mrow><mi>T</mi></msubsup><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>⊙</mo><mo>clip</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>U</mi><msubsup><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>e</mi></mrow><mi>T</mi></msubsup><mo>,</mo><mo>−</mo><mn>10</mn><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">]</mo></mrow><msubsup><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>e</mi></mrow><mi>T</mi></msubsup></mrow><annotation encoding="application/x-tex">
-F_e(U)=\left[\operatorname{SiLU}(\min(UW_{1,e}^T,10))\odot\operatorname{clip}(UW_{3,e}^T,-10,10)\right]W_{2,e}^T
+<p>对 token <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>，文本路径使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b:[384]</annotation></semantics></math>，图像 span 内的 token 使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mrow><mi mathvariant="normal">v</mi><mi mathvariant="normal">l</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">b_{\mathrm{vl}}:[384]</annotation></semantics></math>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mi>i</mi></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>b</mi><mrow><mi mathvariant="normal">v</mi><mi mathvariant="normal">l</mi></mrow></msub><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><msub><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow><mi>i</mi></msub><mo>=</mo><mrow><mi mathvariant="normal">T</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">e</mi></mrow></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mi>b</mi><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">其他情况</mtext></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">
+b_i=
+\begin{cases}
+b_{\mathrm{vl}},&amp;\mathrm{image\_mask}_i=\mathrm{True}\\
+b,&amp;\text{其他情况}
+\end{cases}
 </annotation></semantics></math></p>
-<p>对每个输入 token，两条支路先由 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>5120</mn><annotation encoding="application/x-tex">5120</annotation></semantics></math> 维投影为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>2304</mn><annotation encoding="application/x-tex">2304</annotation></semantics></math> 维，相乘后再投影回 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>5120</mn><annotation encoding="application/x-tex">5120</annotation></semantics></math> 维。Gate 支路只截断上界，Up 支路同时截断上下界。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Expert</code></a></p>
-<h3 id="合并路由专家与共享专家">5.3 合并路由专家与共享专家</h3>
-<p>将选中的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>6</mn><annotation encoding="application/x-tex">6</annotation></semantics></math> 个路由专家输出按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math> 加权求和，再加共享专家输出：</p>
-<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>Y</mi><mi>t</mi></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>0</mn></mrow><mn>5</mn></munderover><msub><mi>g</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub><msub><mi>F</mi><msub><mi>I</mi><mrow><mi>t</mi><mo>,</mo><mi>k</mi></mrow></msub></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>U</mi><mi>t</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><msub><mi>F</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>U</mi><mi>t</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
-Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
+<p>先用加修正量后的分数选专家：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mi>i</mi></msub><mo>=</mo><msub><mo>TopKIndices</mo><mn>6</mn></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>S</mi><mi>i</mi></msub><mo>+</mo><msub><mi>b</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>I</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+I_i=\operatorname{TopKIndices}_{6}(S_i+b_i),
+\qquad I:[N,6]
 </annotation></semantics></math></p>
-<p>选中的路由专家输出逻辑形状为 <code>[BxS,6,5120]</code>，沿专家维汇总后得到 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Y</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">Y:[\mathrm{BxS},5120]</annotation></semantics></math>。共享专家不参加 Top-K，不乘路由权重；残差由当前 MoE 侧的 mHC 融合。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>MoE</code></a></p>
+<p>但修正量<strong>只改变入选次序，不进入最终数值权重</strong>。根据 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>I</mi><mi>i</mi></msub><annotation encoding="application/x-tex">I_i</annotation></semantics></math> 回到原始正分数 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mi>i</mi></msub><annotation encoding="application/x-tex">S_i</annotation></semantics></math> gather，再归一化并乘 <code>route_scale=1.5</code>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>s</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>S</mi><mrow><mi>i</mi><mo>,</mo><msub><mi>I</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>w</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><mn>1.5</mn><mfrac><msub><mi>s</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mrow><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mn>0</mn></mrow><mn>5</mn></munderover><msub><mi>s</mi><mrow><mi>i</mi><mo>,</mo><mi>k</mi></mrow></msub><mo>+</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>20</mn></mrow></msup></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><mi>w</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>6</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+s_{i,e}=S_{i,I_{i,e}},\qquad
+w_{i,e}=1.5\frac{s_{i,e}}{\sum_{k=0}^{5}s_{i,k}+10^{-20}},
+\qquad w:[N,6]
+</annotation></semantics></math></p>
+<p>因此每个 token 的六个路由权重之和约为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1.5</mn><annotation encoding="application/x-tex">1.5</annotation></semantics></math>；分母中的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mn>20</mn></mrow></msup><annotation encoding="application/x-tex">10^{-20}</annotation></semantics></math> 是路由归一化常数。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1033-L1068">核查：固定 revision 的 <code>Gate</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">模型配置</a></p>
+<h3 id="专家参数池与逻辑-gather">5.2 专家参数池与逻辑 gather</h3>
+<p><img src="assets/11_moe_expert_parameter_gather.png" alt="图 11：Top-6 索引到 routed-expert 参数池的逻辑映射" /></p>
+<p>全局 routed expert <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>g</mi><annotation encoding="application/x-tex">g</annotation></semantics></math> 各有三组独立参数，统一按 PyTorch 的 <code>[输出,输入]</code> 存储顺序写为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>g</mi></mrow></msub><mo>,</mo><msub><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>g</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>2304</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>g</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo>,</mo><mn>2304</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+W_{1,g},W_{3,g}:[2304,5120],\qquad W_{2,g}:[5120,2304]
+</annotation></semantics></math></p>
+<p>对 token <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math> 的第 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>e</mi><annotation encoding="application/x-tex">e</annotation></semantics></math> 个 selected slot：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>W</mi><mrow><mn>1</mn><mo>,</mo><msub><mi>I</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>W</mi><mrow><mn>2</mn><mo>,</mo><msub><mi>I</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>W</mi><mrow><mn>3</mn><mo>,</mo><msub><mi>I</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub></mrow></msub></mrow><annotation encoding="application/x-tex">
+W_{1,i,e}=W_{1,I_{i,e}},\qquad
+W_{2,i,e}=W_{2,I_{i,e}},\qquad
+W_{3,i,e}=W_{3,I_{i,e}}
+</annotation></semantics></math></p>
+<p>图 11、图 12 黄色矩阵旁的尺寸采用行向量乘法视角 <code>[输入,输出]</code>，所以写作 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>5120</mn><mo>×</mo><mn>2304</mn></mrow><annotation encoding="application/x-tex">5120\times2304</annotation></semantics></math> 或 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2304</mn><mo>×</mo><mn>5120</mn></mrow><annotation encoding="application/x-tex">2304\times5120</annotation></semantics></math>；正文则始终采用参数存储视角 <code>[输出,输入]</code>，计算时显式写转置。两种标法描述的是同一组矩阵。</p>
+<p>这里的 gather 是<strong>逻辑索引关系</strong>，不表示为每个 token 复制六份完整参数。参考实现反过来按 expert id 统计 token 数，用 <code>where(indices == expert_id)</code> 收集属于该专家的 token，再批量调用一次 expert。多卡时 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 个 routed experts 按 rank 切分，各 rank 计算自己的局部专家后对 FP32 输出累加器做 <code>all_reduce</code>；shared expert 在各 rank 本地执行。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1095-L1145">核查：固定 revision 的 <code>MoE</code></a></p>
+<h3 id="六个-routed-experts-与一个-shared-expert">5.3 六个 routed experts 与一个 shared expert</h3>
+<p><img src="assets/12_moe_expert_computation.png" alt="图 12：六个 routed experts、shared expert 与输出汇聚" /></p>
+<p>对 token <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math> 的第 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>e</mi><annotation encoding="application/x-tex">e</annotation></semantics></math> 个已选 routed expert，先计算两条输入投影：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>G</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>X</mi><mi>i</mi></msub><msubsup><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>i</mi><mo>,</mo><mi>e</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>U</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>X</mi><mi>i</mi></msub><msubsup><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>i</mi><mo>,</mo><mi>e</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>G</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>,</mo><msub><mi>U</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>2304</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+G_{i,e}=X_iW_{1,i,e}^{\mathsf T},\qquad
+U_{i,e}=X_iW_{3,i,e}^{\mathsf T},\qquad
+G_{i,e},U_{i,e}:[2304]
+</annotation></semantics></math></p>
+<p>Gate 支路只裁剪上界，Up 支路裁剪上下界：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>G</mi><mo accent="true">̂</mo></mover><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>G</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>U</mi><mo accent="true">̂</mo></mover><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><mo>clip</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>U</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>,</mo><mo>−</mo><mn>10</mn><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+\widehat G_{i,e}=\min(G_{i,e},10),\qquad
+\widehat U_{i,e}=\operatorname{clip}(U_{i,e},-10,10)
+</annotation></semantics></math></p>
+<p>随后执行 SwiGLU。参考实现先在 FP32 中乘路由权重，再转回输入 dtype 进入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mn>2</mn></msub><annotation encoding="application/x-tex">W_2</annotation></semantics></math>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>H</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><mo>SiLU</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mover><mi>G</mi><mo accent="true">̂</mo></mover><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>⊙</mo><msub><mover><mi>U</mi><mo accent="true">̂</mo></mover><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub></mrow><annotation encoding="application/x-tex">
+H_{i,e}=\operatorname{SiLU}(\widehat G_{i,e})\odot\widehat U_{i,e}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>Y</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>w</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><msub><mi>H</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><msubsup><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>i</mi><mo>,</mo><mi>e</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>Y</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+Y_{i,e}=\left(w_{i,e}H_{i,e}\right)W_{2,i,e}^{\mathsf T},
+\qquad Y_{i,e}:[5120]
+</annotation></semantics></math></p>
+<p>shared expert 使用同一结构和独立的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>s</mi></mrow></msub><mo>,</mo><msub><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>s</mi></mrow></msub><mo>,</mo><msub><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>s</mi></mrow></msub></mrow><annotation encoding="application/x-tex">W_{1,s},W_{2,s},W_{3,s}</annotation></semantics></math>，但不参加 Top-K，也不乘路由权重：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>Y</mi><mrow><mi>i</mi><mo>,</mo><mi>s</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><mo>SiLU</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mi>i</mi></msub><msubsup><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>s</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>⊙</mo><mo>clip</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mi>i</mi></msub><msubsup><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>s</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mo>−</mo><mn>10</mn><mo>,</mo><mn>10</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">]</mo></mrow><msubsup><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>s</mi></mrow><mi>𝖳</mi></msubsup></mrow><annotation encoding="application/x-tex">
+Y_{i,s}=
+\left[
+\operatorname{SiLU}\!\left(\min(X_iW_{1,s}^{\mathsf T},10)\right)
+\odot
+\operatorname{clip}\!\left(X_iW_{3,s}^{\mathsf T},-10,10\right)
+\right]W_{2,s}^{\mathsf T}
+</annotation></semantics></math></p>
+<p>六个 routed 输出在 FP32 累加器中相加，再加 shared 输出，最后转回输入 dtype：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><menclose notation="box"><mrow><msub><mi>Y</mi><mi>i</mi></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>e</mi><mo>=</mo><mn>0</mn></mrow><mn>5</mn></munderover><msub><mi>Y</mi><mrow><mi>i</mi><mo>,</mo><mi>e</mi></mrow></msub><mo>+</mo><msub><mi>Y</mi><mrow><mi>i</mi><mo>,</mo><mi>s</mi></mrow></msub></mrow></menclose><mo>,</mo><mspace width="2.0em"></mspace><mi>Y</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+\boxed{
+Y_i=\sum_{e=0}^{5}Y_{i,e}+Y_{i,s}
+},\qquad Y:[N,5120]
+</annotation></semantics></math></p>
+<p>原始交付图曾把两处 Gate 上限误写为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>0</mn><annotation encoding="application/x-tex">0</annotation></semantics></math>；图 12 已依据官方 <code>clamp(gate,max=10)</code> 修正为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>10</mn><annotation encoding="application/x-tex">10</annotation></semantics></math>，其余结构保持不变。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1071-L1092">核查：固定 revision 的 <code>Expert</code></a></p>
+<h3 id="参数量-1">5.4 参数量</h3>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 30%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th>参数 shape</th>
+<th style="text-align: right;">逻辑参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Router <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>g</mi></msub><annotation encoding="application/x-tex">W_g</annotation></semantics></math></td>
+<td><code>[384,5120]</code></td>
+<td style="text-align: right;">1,966,080</td>
+</tr>
+<tr class="even">
+<td>文本 / 视觉修正量 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>,</mo><msub><mi>b</mi><mrow><mi mathvariant="normal">v</mi><mi mathvariant="normal">l</mi></mrow></msub></mrow><annotation encoding="application/x-tex">b,b_{\mathrm{vl}}</annotation></semantics></math></td>
+<td>各 <code>[384]</code></td>
+<td style="text-align: right;">768</td>
+</tr>
+<tr class="odd">
+<td>384 个 routed experts 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mn>1</mn></msub><mo>,</mo><msub><mi>W</mi><mn>2</mn></msub><mo>,</mo><msub><mi>W</mi><mn>3</mn></msub></mrow><annotation encoding="application/x-tex">W_1,W_2,W_3</annotation></semantics></math></td>
+<td>每个 expert 共 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>3</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2304</mn></mrow><annotation encoding="application/x-tex">3\times5120\times2304</annotation></semantics></math></td>
+<td style="text-align: right;">13,589,544,960</td>
+</tr>
+<tr class="even">
+<td>1 个 shared expert 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mn>1</mn></msub><mo>,</mo><msub><mi>W</mi><mn>2</mn></msub><mo>,</mo><msub><mi>W</mi><mn>3</mn></msub></mrow><annotation encoding="application/x-tex">W_1,W_2,W_3</annotation></semantics></math></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>3</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2304</mn></mrow><annotation encoding="application/x-tex">3\times5120\times2304</annotation></semantics></math></td>
+<td style="text-align: right;">35,389,440</td>
+</tr>
+<tr class="odd">
+<td><strong>合计</strong></td>
+<td>—</td>
+<td style="text-align: right;"><strong>13,626,901,248</strong></td>
+</tr>
+</tbody>
+</table>
+<p>一个 expert 的逻辑参数量为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>N</mi><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mn>3</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2304</mn><mo>=</mo><mn>35389440</mn></mrow><annotation encoding="application/x-tex">
+N_{\mathrm{expert}}=3\times5120\times2304=35389440
+</annotation></semantics></math></p>
+<p>整个 MoE 为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>N</mi><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">E</mi></mrow></msub><mo>=</mo><mn>384</mn><mo>×</mo><mn>35389440</mn><mo>+</mo><mn>35389440</mn><mo>+</mo><mn>384</mn><mo>×</mo><mn>5120</mn><mo>+</mo><mn>2</mn><mo>×</mo><mn>384</mn><mo>=</mo><mn>13626901248</mn></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+N_{\mathrm{MoE}}
+=384\times35389440+35389440+384\times5120+2\times384
+=13626901248
+}
+</annotation></semantics></math></p>
+<p>每个 token 虽然只执行 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>6</mn><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">6+1</annotation></semantics></math> 个专家，但 Router 仍要计算全部 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 个分数；“激活参数量”也不能直接当成单 token 的实际显存读量，因为同一 expert 的权重会在分配给它的一批 token 间复用。</p>
+<h3 id="前向计算量">5.5 前向计算量</h3>
+<p>下面统计<strong>数学前向</strong>：加法、减法和乘法各计 1 次；<code>exp</code>、<code>log</code>、<code>sqrt</code>、除法、比较和 Top-K 单列；不计量化、反量化、数据搬运、参数索引、expert dispatch 和通信。SiLU 按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>x</mi><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>x</mi></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">x/(1+e^{-x})</annotation></semantics></math> 展开；实际 kernel 可以融合这些逐元素步骤。</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>阶段</th>
+<th style="text-align: right;">一 token 的加 / 减 / 乘</th>
+<th>其他运算</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Router 投影 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><msubsup><mi>W</mi><mi>g</mi><mi>𝖳</mi></msubsup></mrow><annotation encoding="application/x-tex">XW_g^{\mathsf T}</annotation></semantics></math></td>
+<td style="text-align: right;">3,931,776</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Sqrt-Softplus</td>
+<td style="text-align: right;">384</td>
+<td>exp：384；log：384；sqrt：384</td>
+</tr>
+<tr class="odd">
+<td>修正量与 Top-6 归一化</td>
+<td style="text-align: right;">396</td>
+<td>除法：6；TopK<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi></mi><mn>6</mn></msub><mrow><mo stretchy="true" form="prefix">(</mo><mn>384</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">_6(384)</annotation></semantics></math>：1 次；混合文本/视觉时条件选择：384</td>
+</tr>
+<tr class="even">
+<td>1 个 routed expert</td>
+<td style="text-align: right;">70,780,672</td>
+<td>exp：2,304；除法：2,304；Clamp 比较：6,912</td>
+</tr>
+<tr class="odd">
+<td>6 个 routed experts</td>
+<td style="text-align: right;">424,684,032</td>
+<td>exp：13,824；除法：13,824；Clamp 比较：41,472</td>
+</tr>
+<tr class="even">
+<td>1 个 shared expert</td>
+<td style="text-align: right;">70,778,368</td>
+<td>exp：2,304；除法：2,304；Clamp 比较：6,912</td>
+</tr>
+<tr class="odd">
+<td>7 路输出汇聚</td>
+<td style="text-align: right;">30,720</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><strong>一 token 合计</strong></td>
+<td style="text-align: right;"><strong>499,425,676</strong></td>
+<td>exp：16,512；log：384；sqrt：384；除法：16,134；显式 Clamp 比较：48,384；TopK：1 次</td>
+</tr>
+</tbody>
+</table>
+<p>其中，单个 routed expert 的三次矩阵投影占绝大部分：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2</mn><mo>×</mo><mn>2304</mn><mrow><mo stretchy="true" form="prefix">(</mo><mn>5120</mn><mo>+</mo><mn>5119</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><mn>5120</mn><mrow><mo stretchy="true" form="prefix">(</mo><mn>2304</mn><mo>+</mo><mn>2303</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>70769152</mn></mrow><annotation encoding="application/x-tex">
+2\times2304(5120+5119)+5120(2304+2303)=70769152
+</annotation></semantics></math></p>
+<p>加上 SiLU、门控乘法和路由缩放后是 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>70780672</mn><annotation encoding="application/x-tex">70780672</annotation></semantics></math> 次加 / 减 / 乘；shared expert 少 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>2304</mn><annotation encoding="application/x-tex">2304</annotation></semantics></math> 次路由缩放，得到 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>70778368</mn><annotation encoding="application/x-tex">70778368</annotation></semantics></math>。因此处理 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math> 个 token 时：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">E</mi><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>=</mo><mn>499425676</mn><mi>N</mi></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{C_{\mathrm{MoE,mul/add/sub}}=499425676N}
+</annotation></semantics></math></p>
+<p>其余按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math> 线性放大；Top-K 内部比较次数取决于实现，未伪装成固定常数。纯文本调用不传 <code>image_mask</code> 时，文本/视觉条件选择也可省略。</p>
+<h3 id="权重存储与最低全局显存">5.6 权重存储与最低全局显存</h3>
+<p>这里同时区分<strong>逻辑参数量</strong>和<strong>实际驻留字节</strong>。按官方参考配置：Router 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>g</mi></msub><annotation encoding="application/x-tex">W_g</annotation></semantics></math> 为 BF16，两个修正量为 FP32；routed experts 使用两个 FP4 值打包为 1 Byte，并沿 K 维每 32 个元素保存 1 个 E8M0 scale；shared expert 使用 FP8 权重和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>32</mn><mo>×</mo><mn>32</mn></mrow><annotation encoding="application/x-tex">32\times32</annotation></semantics></math> 的 E8M0 scale。</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 30%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>驻留对象</th>
+<th>存储方式</th>
+<th style="text-align: right;">字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Router <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>g</mi></msub><annotation encoding="application/x-tex">W_g</annotation></semantics></math></td>
+<td>BF16</td>
+<td style="text-align: right;">3,932,160</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>,</mo><msub><mi>b</mi><mrow><mi mathvariant="normal">v</mi><mi mathvariant="normal">l</mi></mrow></msub></mrow><annotation encoding="application/x-tex">b,b_{\mathrm{vl}}</annotation></semantics></math></td>
+<td>FP32</td>
+<td style="text-align: right;">3,072</td>
+</tr>
+<tr class="odd">
+<td>Routed <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mn>1</mn></msub><annotation encoding="application/x-tex">W_1</annotation></semantics></math> pool</td>
+<td>FP4 packed + E8M0 scale</td>
+<td style="text-align: right;">2,406,481,920</td>
+</tr>
+<tr class="even">
+<td>Routed <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mn>2</mn></msub><annotation encoding="application/x-tex">W_2</annotation></semantics></math> pool</td>
+<td>FP4 packed + E8M0 scale</td>
+<td style="text-align: right;">2,406,481,920</td>
+</tr>
+<tr class="odd">
+<td>Routed <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mn>3</mn></msub><annotation encoding="application/x-tex">W_3</annotation></semantics></math> pool</td>
+<td>FP4 packed + E8M0 scale</td>
+<td style="text-align: right;">2,406,481,920</td>
+</tr>
+<tr class="even">
+<td>Shared <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mrow><mn>1</mn><mo>,</mo><mi>s</mi></mrow></msub><mo>,</mo><msub><mi>W</mi><mrow><mn>2</mn><mo>,</mo><mi>s</mi></mrow></msub><mo>,</mo><msub><mi>W</mi><mrow><mn>3</mn><mo>,</mo><mi>s</mi></mrow></msub></mrow><annotation encoding="application/x-tex">W_{1,s},W_{2,s},W_{3,s}</annotation></semantics></math></td>
+<td>FP8 + E8M0 scale</td>
+<td style="text-align: right;">35,424,000</td>
+</tr>
+<tr class="odd">
+<td><strong>参数与 scale 合计</strong></td>
+<td>—</td>
+<td style="text-align: right;"><strong>7,258,804,992 B（7.259 GB / 6.760 GiB）</strong></td>
+</tr>
+</tbody>
+</table>
+<p>以 routed expert 的一组 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>5120</mn><mo>×</mo><mn>2304</mn></mrow><annotation encoding="application/x-tex">5120\times2304</annotation></semantics></math> 矩阵为例：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">x</mi></mrow></msub><mo>=</mo><mfrac><mrow><mn>5120</mn><mo>×</mo><mn>2304</mn></mrow><mn>2</mn></mfrac><mo>+</mo><mfrac><mrow><mn>5120</mn><mo>×</mo><mn>2304</mn></mrow><mn>32</mn></mfrac><mo>=</mo><mn>6266880</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{routed\ matrix}}
+=\frac{5120\times2304}{2}
++\frac{5120\times2304}{32}
+=6266880\ \mathrm{Byte}
+</annotation></semantics></math></p>
+<p>所以 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 个 routed experts 的三组矩阵合计：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>=</mo><mn>384</mn><mo>×</mo><mn>3</mn><mo>×</mo><mn>6266880</mn><mo>=</mo><mn>7219445760</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{routed}}
+=384\times3\times6266880
+=7219445760\ \mathrm{Byte}
+</annotation></semantics></math></p>
+<p>用于理解生命周期的主要逻辑张量如下；“若完整物化”不表示参考实现一定这样保存：</p>
+<table>
+<colgroup>
+<col style="width: 23%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Tensor</th>
+<th>分类</th>
+<th>shape / dtype</th>
+<th style="text-align: right;">若完整物化的字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math></td>
+<td>Input</td>
+<td><code>[N,5120]</code> / BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10240</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">10240N</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mo>,</mo><mi>S</mi><mo>,</mo><msup><mi>S</mi><mi>b</mi></msup></mrow><annotation encoding="application/x-tex">L,S,S^b</annotation></semantics></math></td>
+<td>Internal</td>
+<td>各 <code>[N,384]</code> / FP32</td>
+<td style="text-align: right;">每个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1536</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">1536N</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>I</mi><annotation encoding="application/x-tex">I</annotation></semantics></math></td>
+<td>Internal</td>
+<td><code>[N,6]</code> / INT64</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>48</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">48N</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>w</mi><annotation encoding="application/x-tex">w</annotation></semantics></math></td>
+<td>Internal</td>
+<td><code>[N,6]</code> / FP32</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>24</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">24N</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>Routed 中间量</td>
+<td>Logical Internal</td>
+<td>各 <code>[N,6,2304]</code> / FP32</td>
+<td style="text-align: right;">每个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>55296</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">55296N</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Routed 输出</td>
+<td>Logical Internal</td>
+<td><code>[N,6,5120]</code> / BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>61440</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">61440N</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>Routed 累加器</td>
+<td>Internal</td>
+<td><code>[N,5120]</code> / FP32</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>20480</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">20480N</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Shared 输出</td>
+<td>Internal</td>
+<td><code>[N,5120]</code> / BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10240</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">10240N</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Y</mi><annotation encoding="application/x-tex">Y</annotation></semantics></math></td>
+<td>Output</td>
+<td><code>[N,5120]</code> / BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10240</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">10240N</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>若只统计 <code>world_size=1</code> 下完整参数池、输入和输出，并假设 Router、expert dispatch、矩阵分块与 reduce 的中间量不完整落到 Global Memory，理论下界为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">E</mi><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>7258804992</mn><mo>+</mo><mn>20480</mn><mi>B</mi><mi>S</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+M_{\mathrm{MoE,min}}(B,S)
+=7258804992+20480BS\ \mathrm{Byte}
+}
+</annotation></semantics></math></p>
+<p>即约 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>7.259</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">B</mi></mrow><mo>+</mo><mn>20.48</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">7.259\,\mathrm{GB}+20.48\,\mathrm{KB}\cdot BS</annotation></semantics></math>；若把调用方持有的 BOOL <code>image_mask:[N]</code> 也归入本模块，再增加 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math> Byte。该式不是进程峰值显存，也不是每步显存流量；未融合激活、allocator、grouped-GEMM workspace 与通信缓冲都会提高实测值。</p>
+<p>若以 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math> 个 rank 做 expert parallel，且 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 可被 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math> 整除，则 routed 参数池按 rank 等分，而 Router 与 shared expert 在参考实现中保留于每个 rank。仅参数与 scale 的单 rank 口径为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">k</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>P</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mfrac><mn>7219445760</mn><mi>P</mi></mfrac><mo>+</mo><mn>39359232</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{param/rank}}(P)
+=\frac{7219445760}{P}+39359232\ \mathrm{Byte}
+</annotation></semantics></math></p>
+<p>FP4 的 <code>[out,in/2]</code> 打包与 <code>[out,in/32]</code> E8M0 scale 形状可在官方 <code>Linear</code> 与 <code>fp4_gemm</code> 中直接核查。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L449-L479">核查：固定 revision 的 <code>Linear</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py#L803-L832"><code>fp4_gemm</code></a></p>
 <h2 id="本层参数与状态汇总">6. 本层参数与状态汇总</h2>
 <p>下表按完整 Layer 0 配置统计逻辑参数量，包含当前文本路径未使用的 <code>bias_vl</code>；不含 embedding、输出头和量化 scale，也不把动态 mHC 系数或 KV cache 算成参数：</p>
 <table>
@@ -1124,5 +1460,5 @@ Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
 <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">模型前向实现</a>：RMSNorm、Attention、Gate、Expert、MoE、Block。</li>
 <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">算子数学细节</a>：hc_split_sinkhorn、sparse_attn。</li>
 </ul>
-<p>全文资料初次核查日期为 2026-10-05；SWA 与 RMSNorm 增补分别于 2026-10-09、2026-10-10 对照上游 <code>main</code> 页面所示 revision <code>517ef62</code> 复核。文内链接仍指向 <code>main</code>，全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-10<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<p>全文资料初次核查日期为 2026-10-05；SWA 与 RMSNorm 增补分别于 2026-10-09、2026-10-10 对照当时上游 <code>main</code> 页面所示 revision <code>517ef62</code> 复核。MoE 增补于 2026-10-13 对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 的配置、<code>Gate</code>、<code>Expert</code>、<code>MoE</code>、量化存储与 FP4 GEMM 复核。全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-13<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

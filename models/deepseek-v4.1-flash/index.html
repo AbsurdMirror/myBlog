@@ -32,7 +32,7 @@
 <td><a href="02-layer0.html">② Layer 0：基准层详解</a></td>
 <td>八模块、四路残差、mHC、RMSNorm、SWA、MoE；公式、shape、参数与状态</td>
 <td>先了解本文符号；①完成后建议先读①</td>
-<td>已发布，含九张原图；持续修订</td>
+<td>已发布，含十二张配图；持续修订</td>
 </tr>
 <tr class="odd">
 <td>③ 其他层的差异</td>
@@ -62,8 +62,8 @@
 </table>
 <p>目前可直接从第②篇开始阅读。尚未写成正文的篇目不提供空链接，也不发布占位页面。第③篇复用基准层已经讲清的模块；第④篇讲特殊模块内部算法；实际字节数、性能和硬件执行集中到第⑥篇。</p>
 <h2 id="版本与资料依据">版本与资料依据</h2>
-<p>官方资料入口：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">deepseek-ai/DeepSeek-V4.1-Flash</a>。既有正文依据此前对官方 main 配置与参考前向的核查整理，核查记录日期为 2026-10-03；本次目录更新没有重新核实模型事实。</p>
-<p>候选 revision 尚未成功读回验证，因此当前<strong>未锁定上游源码版本</strong>。文章已发布不表示全部技术细节均已核实；已知原图标注歧义由正文相邻说明保留。</p>
+<p>官方资料入口：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">deepseek-ai/DeepSeek-V4.1-Flash</a>。既有正文依据此前对官方配置与参考前向的核查整理；各次增补的核查日期和版本边界见正文末尾。</p>
+<p>MoE 章节已于 2026-10-13 对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 复核。文章其他章节并未因此自动锁定到同一 revision；各图的标注勘误和限定仍以相邻正文及 <code>figures.json</code> 为准。</p>
 <h2 id="共用符号">共用符号</h2>
 <table>
 <thead>
@@ -97,5 +97,5 @@
 </table>
 <p>完整序列示例明确 <code>S_his=S</code>；带历史缓存的场景另行声明。可学习权重、运行时系数和固定常数分别说明。</p>
 <h2 id="第②篇的配图进度">第②篇的配图进度</h2>
-<p>现有九张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张、RMSNorm 一张，以及 SWA 的 Q/KV 窗口、mask 与 sink softmax、输出投影三张。MoE 专用图待后续讨论后补充，继续归入第②篇。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-10<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<p>现有十二张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张、RMSNorm 一张、SWA 三张，以及 MoE 的 Router、专家参数逻辑索引、专家计算三张。MoE 专家计算图采用版已把交付图中两处 <code>min(G,0)</code> 勘误为官方实现的 <code>min(G,10)</code>。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-13<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
