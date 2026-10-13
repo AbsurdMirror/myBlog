@@ -1,21 +1,21 @@
 {
-  "checked_at": "2026-10-03",
+  "checked_at": "2026-10-13",
   "model": "deepseek-ai/DeepSeek-V4.1-Flash",
-  "revision_candidate": "2cba9e42aa026125f3ed06c6d98c1db82f7ca027",
-  "revision_content_verified": false,
-  "verification_scope": "main fetched through web tool; pinned revision fetch failed",
+  "revision_candidate": "5254448103b6254fc646dacbca1cbbf20e9216c1",
+  "revision_content_verified": true,
+  "verification_scope": "MoE config, Gate, Expert, MoE, Linear storage, and fp4_gemm verified against the pinned revision; earlier article sections retain their own audit dates",
   "sources": [
     {
       "path": "inference/config.json",
-      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json"
+      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json"
     },
     {
       "path": "inference/model.py",
-      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py"
+      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py"
     },
     {
       "path": "inference/kernel.py",
-      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py"
+      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py"
     }
   ]
 }
