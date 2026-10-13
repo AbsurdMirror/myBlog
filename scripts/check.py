@@ -40,8 +40,19 @@ def main():
     rmsnorm_param_bytes=rmsnorm_params*2
     swa=5120*1280+1280+1280*32768+5120*512+512+64+8*4096*1024+8192*5120
     moe=385*3*5120*2304+384*5120+2*384
+    moe_router_projection=384*(5120+5119)
+    moe_routed_expert=2*2304*(5120+5119)+3*2304+2304+2304+5120*(2304+2303)
+    moe_shared_expert=moe_routed_expert-2304
+    moe_scalar_ops=(moe_router_projection+384+384+(5+1+6)
+                    +6*moe_routed_expert+moe_shared_expert+6*5120)
+    moe_routed_matrix_bytes=5120*2304//2+5120*2304//32
+    moe_shared_matrix_bytes=5120*2304+(5120//32)*(2304//32)
+    moe_parameter_bytes=(384*3*moe_routed_matrix_bytes+3*moe_shared_matrix_bytes
+                         +384*5120*2+2*384*4)
     assert (rmsnorm,2*rmsnorm_params,rmsnorm_param_bytes)==(20481,10240,10240)
     assert (mhc,swa,moe)==(491547,126617408,13626901248)
+    assert (moe_routed_expert,moe_shared_expert,moe_scalar_ops)==(70780672,70778368,499425676)
+    assert (moe_routed_matrix_bytes,moe_shared_matrix_bytes,moe_parameter_bytes)==(6266880,11808000,7258804992)
     assert 2*mhc+2*5120+swa+moe==13754511990
     if errors: raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(pages)} pages, relative resources, original hashes, arithmetic ({mode}).')

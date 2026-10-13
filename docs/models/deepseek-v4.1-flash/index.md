@@ -1,7 +1,7 @@
 ---
 title: DeepSeek-V4.1-Flash 图解系列
 status: published
-updated: 2026-10-10
+updated: 2026-10-13
 ---
 
 # DeepSeek-V4.1-Flash 图解系列
@@ -15,7 +15,7 @@ updated: 2026-10-10
 | 篇目 | 解决的问题与范围 | 前置阅读 | 当前状态 |
 |---|---|---|---|
 | ① 模型全貌 | 输入输出、整体主干、层分类、层间数据及缓存概览；建立模型地图，不逐算子推导 | 无 | 规划中，正文尚未开始 |
-| [② Layer 0：基准层详解](02-layer0.md) | 八模块、四路残差、mHC、RMSNorm、SWA、MoE；公式、shape、参数与状态 | 先了解本文符号；①完成后建议先读① | 已发布，含九张原图；持续修订 |
+| [② Layer 0：基准层详解](02-layer0.md) | 八模块、四路残差、mHC、RMSNorm、SWA、MoE；公式、shape、参数与状态 | 先了解本文符号；①完成后建议先读① | 已发布，含十二张配图；持续修订 |
 | ③ 其他层的差异 | 相对 Layer 0 的新增、删除、变化与复用；标清完整流程中的位置与接口 | ①、② | 规划中，正文尚未开始 |
 | ④ 特殊模块详解 | 候选主题为 Engram、视觉路径、DSpark 等；展开作用、接入位置、内部计算与状态 | ①、②及相关差异层 | 规划中，逐项讨论后展开 |
 | ⑤ 完整推理过程 | Prefill、Decode、多轮对话的依赖、时间顺序与状态生命周期 | ①—④中相关内容 | 规划中，正文尚未开始 |
@@ -25,9 +25,9 @@ updated: 2026-10-10
 
 ## 版本与资料依据
 
-官方资料入口：[deepseek-ai/DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)。既有正文依据此前对官方 main 配置与参考前向的核查整理，核查记录日期为 2026-10-03；本次目录更新没有重新核实模型事实。
+官方资料入口：[deepseek-ai/DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)。既有正文依据此前对官方配置与参考前向的核查整理；各次增补的核查日期和版本边界见正文末尾。
 
-候选 revision 尚未成功读回验证，因此当前**未锁定上游源码版本**。文章已发布不表示全部技术细节均已核实；已知原图标注歧义由正文相邻说明保留。
+MoE 章节已于 2026-10-13 对照固定 revision [`5254448103b6254fc646dacbca1cbbf20e9216c1`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1) 复核。文章其他章节并未因此自动锁定到同一 revision；各图的标注勘误和限定仍以相邻正文及 `figures.json` 为准。
 
 ## 共用符号
 
@@ -43,4 +43,4 @@ updated: 2026-10-10
 
 ## 第②篇的配图进度
 
-现有九张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、`hc_pre` 汇聚一张、`hc_post` 融合一张、RMSNorm 一张，以及 SWA 的 Q/KV 窗口、mask 与 sink softmax、输出投影三张。MoE 专用图待后续讨论后补充，继续归入第②篇。
+现有十二张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、`hc_pre` 汇聚一张、`hc_post` 融合一张、RMSNorm 一张、SWA 三张，以及 MoE 的 Router、专家参数逻辑索引、专家计算三张。MoE 专家计算图采用版已把交付图中两处 `min(G,0)` 勘误为官方实现的 `min(G,10)`。

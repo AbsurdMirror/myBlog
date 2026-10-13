@@ -113,6 +113,45 @@
       "notes": [
         "正文补充FP32内部计算、BF16输入输出与gamma，以及两套入口Norm的参数和显存复用口径。"
       ]
+    },
+    {
+      "id": "layer0-10",
+      "file": "10_moe_router.png",
+      "sha256": "065bb23b5a757e1596ebea52b13b44575946285d895df5bb397b0a531854b600",
+      "bytes": 1573802,
+      "width": 1448,
+      "height": 1086,
+      "selection": "user-supplied",
+      "semantic_review": "reviewed",
+      "notes": [
+        "已对照固定revision核查：文本/视觉修正量只影响Top-6选择，权重从原始Sqrt-Softplus分数gather并归一化。"
+      ]
+    },
+    {
+      "id": "layer0-11",
+      "file": "11_moe_expert_parameter_gather.png",
+      "sha256": "d31873a8ab6e55bdf0111c0bdc2d973a042eb3a1eddd2bff80814922d82ce1be",
+      "bytes": 1346882,
+      "width": 1774,
+      "height": 887,
+      "selection": "user-supplied",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "图中矩阵尺寸按行向量乘法的[input,output]视角标注；正文统一按PyTorch参数存储[output,input]书写。gather是逻辑视图，不表示逐token复制完整专家权重。"
+      ]
+    },
+    {
+      "id": "layer0-12",
+      "file": "12_moe_expert_computation.png",
+      "sha256": "2b0b1d39604e4b813d4f139a697edcd2992379e84bcbf042551f5af0c1d9eba2",
+      "bytes": 1742853,
+      "width": 1774,
+      "height": 887,
+      "selection": "user-supplied-corrected",
+      "semantic_review": "reviewed",
+      "notes": [
+        "原始交付图两处Gate上限误写为min(G,0)；采用版依据官方clamp(gate,max=10)修正为min(G,10)，其余结构保持原风格。"
+      ]
     }
   ]
 }

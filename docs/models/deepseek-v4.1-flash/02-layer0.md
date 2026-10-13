@@ -2,7 +2,7 @@
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
 status: published
-updated: 2026-10-10
+updated: 2026-10-13
 order: 2
 ---
 
@@ -641,43 +641,247 @@ $$
 
 ## 5. MoE 前馈计算
 
-### 5.1 选择 6 个路由专家
-
-MoE 的输入 $U:[\mathrm{BxS},5120]$ 已经过 MoE 入口 RMSNorm。本配置有 $384$ 个路由专家，每个 token 选择其中 $6$ 个，另外计算 $1$ 个共享专家；路由温度为 $1$，融合权重的缩放系数为 $1.5$。
-
-路由投影权重为 $W_R:[384,5120]$。修正向量 $b:[384]$ 只影响专家选择，融合权重仍使用原始正数评分 $R$：
+这一节继续沿用前文的展开方式：先跟踪 Router、专家参数索引和专家计算，再核算参数、计算量与最低全局显存。记
 
 $$
-R=\sqrt{\operatorname{Softplus}(UW_R^T)},\qquad I_t=\operatorname{TopKIndices}_{6}(R_t+b)
+N=BS,\qquad H=5120,\qquad M=2304,\qquad E=384,\qquad K=6
 $$
 
-$R:[\mathrm{BxS},384]$ 是专家评分，$I:[\mathrm{BxS},6]$ 是选中的专家索引。取出对应评分，归一化后乘以 $1.5$，得到融合权重 $g$：
+输入 $X:[N,H]$ 已经过 MoE 入口 RMSNorm。每个 token 从 $384$ 个 routed experts 中选择 $6$ 个，同时无条件执行 $1$ 个 shared expert；所有专家都是无投影偏置的截断 SwiGLU。
+
+### 5.1 Router：Top-6 选择与路由权重
+
+![图 10：Sqrt-Softplus Router、文本/视觉修正量与 Top-6](assets/10_moe_router.png)
+
+Router 先用 $W_g:[384,5120]$ 计算 logits。参考实现把输入和 $W_g$ 转成 FP32 后再执行这次投影；本配置温度 $\tau=1$：
 
 $$
-g_{t,k}=1.5\frac{R_{t,I_{t,k}}}{\sum_{\ell=0}^{5}R_{t,I_{t,\ell}}+10^{-20}}
+L=\frac{XW_g^{\mathsf T}}{\tau},\qquad
+S=\sqrt{\operatorname{Softplus}(L)},\qquad
+L,S:[N,384]
 $$
 
-$g:[\mathrm{BxS},6]$，每个 token 的融合权重和约为 $1.5$。本文文本路径使用 `bias`；模型另外保留图像路径使用的修正向量 `bias_vl`。[核查：`Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
-
-### 5.2 每个专家的带截断 SwiGLU
-
-路由专家只处理分配给自己的 token。下面定义单个专家对输入 $U$ 的变换；每个专家有独立的 $W_1,W_3:[2304,5120]$ 与 $W_2:[5120,2304]$，没有投影偏置：
+对 token $i$，文本路径使用 $b:[384]$，图像 span 内的 token 使用 $b_{\mathrm{vl}}:[384]$：
 
 $$
-F_e(U)=\left[\operatorname{SiLU}(\min(UW_{1,e}^T,10))\odot\operatorname{clip}(UW_{3,e}^T,-10,10)\right]W_{2,e}^T
+b_i=
+\begin{cases}
+b_{\mathrm{vl}},&\mathrm{image\_mask}_i=\mathrm{True}\\
+b,&\text{其他情况}
+\end{cases}
 $$
 
-对每个输入 token，两条支路先由 $5120$ 维投影为 $2304$ 维，相乘后再投影回 $5120$ 维。Gate 支路只截断上界，Up 支路同时截断上下界。[核查：`Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
-
-### 5.3 合并路由专家与共享专家
-
-将选中的 $6$ 个路由专家输出按 $g$ 加权求和，再加共享专家输出：
+先用加修正量后的分数选专家：
 
 $$
-Y_t=\sum_{k=0}^{5}g_{t,k}F_{I_{t,k}}(U_t)+F_{\mathrm{shared}}(U_t)
+I_i=\operatorname{TopKIndices}_{6}(S_i+b_i),
+\qquad I:[N,6]
 $$
 
-选中的路由专家输出逻辑形状为 `[BxS,6,5120]`，沿专家维汇总后得到 $Y:[\mathrm{BxS},5120]$。共享专家不参加 Top-K，不乘路由权重；残差由当前 MoE 侧的 mHC 融合。[核查：`MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)
+但修正量**只改变入选次序，不进入最终数值权重**。根据 $I_i$ 回到原始正分数 $S_i$ gather，再归一化并乘 `route_scale=1.5`：
+
+$$
+s_{i,e}=S_{i,I_{i,e}},\qquad
+w_{i,e}=1.5\frac{s_{i,e}}{\sum_{k=0}^{5}s_{i,k}+10^{-20}},
+\qquad w:[N,6]
+$$
+
+因此每个 token 的六个路由权重之和约为 $1.5$；分母中的 $10^{-20}$ 是路由归一化常数。[核查：固定 revision 的 `Gate`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1033-L1068)、[模型配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json)
+
+### 5.2 专家参数池与逻辑 gather
+
+![图 11：Top-6 索引到 routed-expert 参数池的逻辑映射](assets/11_moe_expert_parameter_gather.png)
+
+全局 routed expert $g$ 各有三组独立参数，统一按 PyTorch 的 `[输出,输入]` 存储顺序写为：
+
+$$
+W_{1,g},W_{3,g}:[2304,5120],\qquad W_{2,g}:[5120,2304]
+$$
+
+对 token $i$ 的第 $e$ 个 selected slot：
+
+$$
+W_{1,i,e}=W_{1,I_{i,e}},\qquad
+W_{2,i,e}=W_{2,I_{i,e}},\qquad
+W_{3,i,e}=W_{3,I_{i,e}}
+$$
+
+图 11、图 12 黄色矩阵旁的尺寸采用行向量乘法视角 `[输入,输出]`，所以写作 $5120\times2304$ 或 $2304\times5120$；正文则始终采用参数存储视角 `[输出,输入]`，计算时显式写转置。两种标法描述的是同一组矩阵。
+
+这里的 gather 是**逻辑索引关系**，不表示为每个 token 复制六份完整参数。参考实现反过来按 expert id 统计 token 数，用 `where(indices == expert_id)` 收集属于该专家的 token，再批量调用一次 expert。多卡时 $384$ 个 routed experts 按 rank 切分，各 rank 计算自己的局部专家后对 FP32 输出累加器做 `all_reduce`；shared expert 在各 rank 本地执行。[核查：固定 revision 的 `MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1095-L1145)
+
+### 5.3 六个 routed experts 与一个 shared expert
+
+![图 12：六个 routed experts、shared expert 与输出汇聚](assets/12_moe_expert_computation.png)
+
+对 token $i$ 的第 $e$ 个已选 routed expert，先计算两条输入投影：
+
+$$
+G_{i,e}=X_iW_{1,i,e}^{\mathsf T},\qquad
+U_{i,e}=X_iW_{3,i,e}^{\mathsf T},\qquad
+G_{i,e},U_{i,e}:[2304]
+$$
+
+Gate 支路只裁剪上界，Up 支路裁剪上下界：
+
+$$
+\widehat G_{i,e}=\min(G_{i,e},10),\qquad
+\widehat U_{i,e}=\operatorname{clip}(U_{i,e},-10,10)
+$$
+
+随后执行 SwiGLU。参考实现先在 FP32 中乘路由权重，再转回输入 dtype 进入 $W_2$：
+
+$$
+H_{i,e}=\operatorname{SiLU}(\widehat G_{i,e})\odot\widehat U_{i,e}
+$$
+
+$$
+Y_{i,e}=\left(w_{i,e}H_{i,e}\right)W_{2,i,e}^{\mathsf T},
+\qquad Y_{i,e}:[5120]
+$$
+
+shared expert 使用同一结构和独立的 $W_{1,s},W_{2,s},W_{3,s}$，但不参加 Top-K，也不乘路由权重：
+
+$$
+Y_{i,s}=
+\left[
+\operatorname{SiLU}\!\left(\min(X_iW_{1,s}^{\mathsf T},10)\right)
+\odot
+\operatorname{clip}\!\left(X_iW_{3,s}^{\mathsf T},-10,10\right)
+\right]W_{2,s}^{\mathsf T}
+$$
+
+六个 routed 输出在 FP32 累加器中相加，再加 shared 输出，最后转回输入 dtype：
+
+$$
+\boxed{
+Y_i=\sum_{e=0}^{5}Y_{i,e}+Y_{i,s}
+},\qquad Y:[N,5120]
+$$
+
+原始交付图曾把两处 Gate 上限误写为 $0$；图 12 已依据官方 `clamp(gate,max=10)` 修正为 $10$，其余结构保持不变。[核查：固定 revision 的 `Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1071-L1092)
+
+### 5.4 参数量
+
+| 部分 | 参数 shape | 逻辑参数量 |
+|---|---|---:|
+| Router $W_g$ | `[384,5120]` | 1,966,080 |
+| 文本 / 视觉修正量 $b,b_{\mathrm{vl}}$ | 各 `[384]` | 768 |
+| 384 个 routed experts 的 $W_1,W_2,W_3$ | 每个 expert 共 $3\times5120\times2304$ | 13,589,544,960 |
+| 1 个 shared expert 的 $W_1,W_2,W_3$ | $3\times5120\times2304$ | 35,389,440 |
+| **合计** | — | **13,626,901,248** |
+
+一个 expert 的逻辑参数量为：
+
+$$
+N_{\mathrm{expert}}=3\times5120\times2304=35389440
+$$
+
+整个 MoE 为：
+
+$$
+\boxed{
+N_{\mathrm{MoE}}
+=384\times35389440+35389440+384\times5120+2\times384
+=13626901248
+}
+$$
+
+每个 token 虽然只执行 $6+1$ 个专家，但 Router 仍要计算全部 $384$ 个分数；“激活参数量”也不能直接当成单 token 的实际显存读量，因为同一 expert 的权重会在分配给它的一批 token 间复用。
+
+### 5.5 前向计算量
+
+下面统计**数学前向**：加法、减法和乘法各计 1 次；`exp`、`log`、`sqrt`、除法、比较和 Top-K 单列；不计量化、反量化、数据搬运、参数索引、expert dispatch 和通信。SiLU 按 $x/(1+e^{-x})$ 展开；实际 kernel 可以融合这些逐元素步骤。
+
+| 阶段 | 一 token 的加 / 减 / 乘 | 其他运算 |
+|---|---:|---|
+| Router 投影 $XW_g^{\mathsf T}$ | 3,931,776 | — |
+| Sqrt-Softplus | 384 | exp：384；log：384；sqrt：384 |
+| 修正量与 Top-6 归一化 | 396 | 除法：6；TopK$_6(384)$：1 次；混合文本/视觉时条件选择：384 |
+| 1 个 routed expert | 70,780,672 | exp：2,304；除法：2,304；Clamp 比较：6,912 |
+| 6 个 routed experts | 424,684,032 | exp：13,824；除法：13,824；Clamp 比较：41,472 |
+| 1 个 shared expert | 70,778,368 | exp：2,304；除法：2,304；Clamp 比较：6,912 |
+| 7 路输出汇聚 | 30,720 | — |
+| **一 token 合计** | **499,425,676** | exp：16,512；log：384；sqrt：384；除法：16,134；显式 Clamp 比较：48,384；TopK：1 次 |
+
+其中，单个 routed expert 的三次矩阵投影占绝大部分：
+
+$$
+2\times2304(5120+5119)+5120(2304+2303)=70769152
+$$
+
+加上 SiLU、门控乘法和路由缩放后是 $70780672$ 次加 / 减 / 乘；shared expert 少 $2304$ 次路由缩放，得到 $70778368$。因此处理 $N=BS$ 个 token 时：
+
+$$
+\boxed{C_{\mathrm{MoE,mul/add/sub}}=499425676N}
+$$
+
+其余按 $N$ 线性放大；Top-K 内部比较次数取决于实现，未伪装成固定常数。纯文本调用不传 `image_mask` 时，文本/视觉条件选择也可省略。
+
+### 5.6 权重存储与最低全局显存
+
+这里同时区分**逻辑参数量**和**实际驻留字节**。按官方参考配置：Router 的 $W_g$ 为 BF16，两个修正量为 FP32；routed experts 使用两个 FP4 值打包为 1 Byte，并沿 K 维每 32 个元素保存 1 个 E8M0 scale；shared expert 使用 FP8 权重和 $32\times32$ 的 E8M0 scale。
+
+| 驻留对象 | 存储方式 | 字节数 |
+|---|---|---:|
+| Router $W_g$ | BF16 | 3,932,160 |
+| $b,b_{\mathrm{vl}}$ | FP32 | 3,072 |
+| Routed $W_1$ pool | FP4 packed + E8M0 scale | 2,406,481,920 |
+| Routed $W_2$ pool | FP4 packed + E8M0 scale | 2,406,481,920 |
+| Routed $W_3$ pool | FP4 packed + E8M0 scale | 2,406,481,920 |
+| Shared $W_{1,s},W_{2,s},W_{3,s}$ | FP8 + E8M0 scale | 35,424,000 |
+| **参数与 scale 合计** | — | **7,258,804,992 B（7.259 GB / 6.760 GiB）** |
+
+以 routed expert 的一组 $5120\times2304$ 矩阵为例：
+
+$$
+M_{\mathrm{routed\ matrix}}
+=\frac{5120\times2304}{2}
++\frac{5120\times2304}{32}
+=6266880\ \mathrm{Byte}
+$$
+
+所以 $384$ 个 routed experts 的三组矩阵合计：
+
+$$
+M_{\mathrm{routed}}
+=384\times3\times6266880
+=7219445760\ \mathrm{Byte}
+$$
+
+用于理解生命周期的主要逻辑张量如下；“若完整物化”不表示参考实现一定这样保存：
+
+| Tensor | 分类 | shape / dtype | 若完整物化的字节数 |
+|---|---|---|---:|
+| $X$ | Input | `[N,5120]` / BF16 | $10240N$ |
+| $L,S,S^b$ | Internal | 各 `[N,384]` / FP32 | 每个 $1536N$ |
+| $I$ | Internal | `[N,6]` / INT64 | $48N$ |
+| $w$ | Internal | `[N,6]` / FP32 | $24N$ |
+| Routed 中间量 | Logical Internal | 各 `[N,6,2304]` / FP32 | 每个 $55296N$ |
+| Routed 输出 | Logical Internal | `[N,6,5120]` / BF16 | $61440N$ |
+| Routed 累加器 | Internal | `[N,5120]` / FP32 | $20480N$ |
+| Shared 输出 | Internal | `[N,5120]` / BF16 | $10240N$ |
+| $Y$ | Output | `[N,5120]` / BF16 | $10240N$ |
+
+若只统计 `world_size=1` 下完整参数池、输入和输出，并假设 Router、expert dispatch、矩阵分块与 reduce 的中间量不完整落到 Global Memory，理论下界为：
+
+$$
+\boxed{
+M_{\mathrm{MoE,min}}(B,S)
+=7258804992+20480BS\ \mathrm{Byte}
+}
+$$
+
+即约 $7.259\,\mathrm{GB}+20.48\,\mathrm{KB}\cdot BS$；若把调用方持有的 BOOL `image_mask:[N]` 也归入本模块，再增加 $N$ Byte。该式不是进程峰值显存，也不是每步显存流量；未融合激活、allocator、grouped-GEMM workspace 与通信缓冲都会提高实测值。
+
+若以 $P$ 个 rank 做 expert parallel，且 $384$ 可被 $P$ 整除，则 routed 参数池按 rank 等分，而 Router 与 shared expert 在参考实现中保留于每个 rank。仅参数与 scale 的单 rank 口径为：
+
+$$
+M_{\mathrm{param/rank}}(P)
+=\frac{7219445760}{P}+39359232\ \mathrm{Byte}
+$$
+
+FP4 的 `[out,in/2]` 打包与 `[out,in/32]` E8M0 scale 形状可在官方 `Linear` 与 `fp4_gemm` 中直接核查。[核查：固定 revision 的 `Linear`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L449-L479)、[`fp4_gemm`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py#L803-L832)
 
 ## 6. 本层参数与状态汇总
 
@@ -704,4 +908,4 @@ $$
 - [模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py)：RMSNorm、Attention、Gate、Expert、MoE、Block。
 - [算子数学细节](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py)：hc_split_sinkhorn、sparse_attn。
 
-全文资料初次核查日期为 2026-10-05；SWA 与 RMSNorm 增补分别于 2026-10-09、2026-10-10 对照上游 `main` 页面所示 revision `517ef62` 复核。文内链接仍指向 `main`，全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。
+全文资料初次核查日期为 2026-10-05；SWA 与 RMSNorm 增补分别于 2026-10-09、2026-10-10 对照当时上游 `main` 页面所示 revision `517ef62` 复核。MoE 增补于 2026-10-13 对照固定 revision [`5254448103b6254fc646dacbca1cbbf20e9216c1`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1) 的配置、`Gate`、`Expert`、`MoE`、量化存储与 FP4 GEMM 复核。全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。
