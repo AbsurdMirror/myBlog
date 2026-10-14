@@ -173,8 +173,8 @@ Y_{\mathrm{post},t,j,d}
 X&#39;=X_{\mathrm{post}}+Y_{\mathrm{post}},
 \qquad X&#39;:[\mathrm{BxS},4,5120]
 </annotation></semantics></math></p>
-<h3 id="参数量计算量与空间占用">2.5 参数量、计算量与空间占用</h3>
-<p>以下先按<strong>一套 mHC</strong>统计，再按 Attention、MoE 两套汇总参数量和计算量。参数量、计算量中的 K、M 分别表示 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mn>3</mn></msup><annotation encoding="application/x-tex">10^3</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mn>6</mn></msup><annotation encoding="application/x-tex">10^6</annotation></semantics></math>；空间占用使用 Byte、KiB、MiB。</p>
+<h3 id="参数量计算量与-required-global-memory-理论下界">2.5 参数量、计算量与 Required Global Memory 理论下界</h3>
+<p>以下先按<strong>一套 mHC</strong>统计，再按 Attention、MoE 两套汇总参数量和计算量。参数量、计算量中的 K、M 分别表示 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mn>3</mn></msup><annotation encoding="application/x-tex">10^3</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mn>6</mn></msup><annotation encoding="application/x-tex">10^6</annotation></semantics></math>；存储量使用 Byte、KiB、MiB。</p>
 <h4 id="参数量">参数量</h4>
 <p>一套 mHC 的可学习参数包括联合投影矩阵 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>、偏置 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">e</mi></mrow><annotation encoding="application/x-tex">\mathrm{hc\_base}</annotation></semantics></math> 和缩放系数 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow><annotation encoding="application/x-tex">\mathrm{hc\_scale}</annotation></semantics></math>。四路汇聚和残差融合没有额外可学习参数，固定常数不计入参数量。</p>
 <table>
@@ -295,20 +295,24 @@ P_{\mathrm{mHC}}
 </tr>
 </tbody>
 </table>
-<p>将一套 mHC 的运算量乘以 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>2</mn><annotation encoding="application/x-tex">2</annotation></semantics></math>，得到<strong>每层 mHC 处理一个 token</strong>的计算量。Layer 0 的首次 pre 为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mn>1</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[1,0,0,0]</annotation></semantics></math>；下表按理论上直接取第 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>0</mn><annotation encoding="application/x-tex">0</annotation></semantics></math> 路输入计算，省去首次汇聚的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>35840</mn><annotation encoding="application/x-tex">35840</annotation></semantics></math> 次乘加运算。</p>
+<p>将一套 mHC 的运算量乘以 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>2</mn><annotation encoding="application/x-tex">2</annotation></semantics></math>，得到<strong>每层 mHC 处理一个 token</strong>的官方通用路径计算量：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2</mn><mo>×</mo><mn>1244901</mn><mo>=</mo><mn>2489802</mn></mrow><annotation encoding="application/x-tex">
+2\times1244901=2489802
+</annotation></semantics></math></p>
+<p>Layer 0 的首次 pre 虽然固定为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mn>1</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[1,0,0,0]</annotation></semantics></math>，但固定 revision 的官方 reference 前向仍会创建 <code>pre_mix:[B,S,4]</code> 并调用通用 <code>hc_pre</code>，没有把它常量折叠成“直接取第 0 路”。因此整层汇总以 <strong>2,489,802</strong> 次加 / 减 / 乘为准。若某个优化实现做了这项折叠，才可省去首次汇聚的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>35840</mn><annotation encoding="application/x-tex">35840</annotation></semantics></math> 次，降至 <strong>2,453,962</strong> 次。</p>
 <table>
 <thead>
 <tr class="header">
 <th>op</th>
-<th style="text-align: right;">普通层计算量</th>
-<th style="text-align: right;">Layer 0 计算量</th>
+<th style="text-align: right;">Reference 通用路径</th>
+<th style="text-align: right;">Layer 0 常量折叠理论值</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>乘加运算</td>
-<td style="text-align: right;">2.490M</td>
-<td style="text-align: right;">2.454M</td>
+<td>加 / 减 / 乘</td>
+<td style="text-align: right;">2,489,802</td>
+<td style="text-align: right;">2,453,962</td>
 </tr>
 <tr class="even">
 <td>除法</td>
@@ -333,8 +337,8 @@ P_{\mathrm{mHC}}
 </tbody>
 </table>
 <p>处理 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><annotation encoding="application/x-tex">\mathrm{BxS}</annotation></semantics></math> 个 token 时，各项计算量按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><annotation encoding="application/x-tex">\mathrm{BxS}</annotation></semantics></math> 倍计。</p>
-<h4 id="空间占用">空间占用</h4>
-<p>以下按<strong>一套 mHC</strong> 的完整逻辑张量核算理论 Global Memory 占用。数据类型见下表：FP32 每元素 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>4</mn><annotation encoding="application/x-tex">4</annotation></semantics></math> Byte，BF16 每元素 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>2</mn><annotation encoding="application/x-tex">2</annotation></semantics></math> Byte；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>=</mo><mn>1024</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">1\,\mathrm{KiB}=1024\,\mathrm{Byte}</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>=</mo><msup><mn>1024</mn><mn>2</mn></msup><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">1\,\mathrm{MiB}=1024^2\,\mathrm{Byte}</annotation></semantics></math>。</p>
+<h4 id="required-global-memory-理论下界理想融合口径">Required Global Memory 理论下界（理想融合口径）</h4>
+<p>以下按<strong>一套 mHC</strong> 的完整逻辑张量核算 Required Global Memory 理论下界。数据类型见下表：FP32 每元素 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>4</mn><annotation encoding="application/x-tex">4</annotation></semantics></math> Byte，BF16 每元素 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>2</mn><annotation encoding="application/x-tex">2</annotation></semantics></math> Byte；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>=</mo><mn>1024</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">1\,\mathrm{KiB}=1024\,\mathrm{Byte}</annotation></semantics></math>，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>=</mo><msup><mn>1024</mn><mn>2</mn></msup><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">1\,\mathrm{MiB}=1024^2\,\mathrm{Byte}</annotation></semantics></math>。</p>
 <p>将整个 mHC 作为一个逻辑分析单元，采用以下存储假设：</p>
 <ul>
 <li><strong>Weight</strong>：模型参数长期保存在 Global Memory。</li>
@@ -532,7 +536,7 @@ M_{\mathrm{input}}=40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{By
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mn>40</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mo>+</mo><mn>16</mn><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">S</mi></mrow><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
 M_{\mathrm{output}}=40\,\mathrm{KiB}\cdot \mathrm{BxS}+16\mathrm{BxS}\,\mathrm{Byte}
 </annotation></semantics></math></p>
-<p>形状与类型依据：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json">模型配置</a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">模型前向实现</a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">系数生成核</a>。核查日期：2026-10-05。</p>
+<p>形状与类型依据：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">模型配置</a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py">模型前向实现</a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py">系数生成核</a>。全文统一复核日期：2026-10-14。</p>
 <h2 id="两个入口-rmsnorm">3. 两个入口 RMSNorm</h2>
 <p>Layer 0 有两套互不共享参数的入口 RMSNorm：一套位于第一次 <code>hc_pre</code> 与 Attention 之间，另一套位于第二次 <code>hc_pre</code> 与 MoE 之间。两次输入都是四路汇聚后的单路张量，shape 均为 <code>[B,S,5120]</code>；记 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math>，以下先分析其中一套。</p>
 <p><img src="assets/09_rmsnorm_forward.png" alt="图 6：5120 维 RMSNorm 的四步计算" /></p>
@@ -554,7 +558,7 @@ r_i=\frac{1}{\sqrt{m_i+\epsilon}},\qquad r:[N,1]
 X&#39;_{ij}=\widehat X_{ij}r_i,\qquad
 Y_{ij}=X&#39;_{ij}\gamma_j
 </annotation></semantics></math></p>
-<p>最后把 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Y</mi><annotation encoding="application/x-tex">Y</annotation></semantics></math> 转回输入 dtype。当前参考推理路径的输入、输出和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math> 为 BF16，均方、<code>rsqrt</code>、归一化及权重缩放在 FP32 表达中完成。<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math> 是唯一的可学习参数，没有 bias；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ϵ</mi><annotation encoding="application/x-tex">\epsilon</annotation></semantics></math> 是固定常数，不计入参数量。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>RMSNorm</code></a></p>
+<p>最后把 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Y</mi><annotation encoding="application/x-tex">Y</annotation></semantics></math> 转回输入 dtype。当前参考推理路径的输入、输出和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math> 为 BF16，均方、<code>rsqrt</code>、归一化及权重缩放在 FP32 表达中完成。<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math> 是唯一的可学习参数，没有 bias；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ϵ</mi><annotation encoding="application/x-tex">\epsilon</annotation></semantics></math> 是固定常数，不计入参数量。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L303-L317">核查：固定 revision 的 <code>RMSNorm</code></a></p>
 <h3 id="参数量与前向计算量">3.2 参数量与前向计算量</h3>
 <p>一套 5120 维 RMSNorm 只有一个缩放向量：</p>
 <table>
@@ -617,7 +621,7 @@ C_{\mathrm{RMSNorm}}=20481N\ \text{次标量加法/乘法}+N\ \text{次 rsqrt}
 C_{\mathrm{Layer0\ Norm}}=40962N\ \text{次标量加法/乘法}+2N\ \text{次 rsqrt}
 </annotation></semantics></math></p>
 <p>这是按数学步骤统计的运算量，不等同于 GPU 指令数或执行时间；实际 kernel 会融合归约、广播和逐元素乘法。</p>
-<h3 id="张量生命周期与最低全局显存">3.3 张量生命周期与最低全局显存</h3>
+<h3 id="张量生命周期与-required-global-memory-理论下界理想融合口径">3.3 张量生命周期与 Required Global Memory 理论下界（理想融合口径）</h3>
 <p>一套 RMSNorm 的逻辑张量如下。内部 FP32 张量用于说明计算与上界，不代表实现必须把它们完整写入 Global Memory：</p>
 <table>
 <thead>
@@ -681,7 +685,7 @@ C_{\mathrm{Layer0\ Norm}}=40962N\ \text{次标量加法/乘法}+2N\ \text{次 rs
 </tr>
 </tbody>
 </table>
-<p>若只统计参数、输入和输出，并假设融合/tiling 让 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>X</mi><mo accent="true">̂</mo></mover><mo>,</mo><mi>m</mi><mo>,</mo><mi>r</mi><mo>,</mo><mi>X</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">\widehat X,m,r,X&#39;</annotation></semantics></math> 停留在寄存器或共享内存，一套 RMSNorm 的最低所需 Global Memory 为：</p>
+<p>若只统计参数、输入和输出，并假设融合/tiling 让 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>X</mi><mo accent="true">̂</mo></mover><mo>,</mo><mi>m</mi><mo>,</mo><mi>r</mi><mo>,</mo><mi>X</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">\widehat X,m,r,X&#39;</annotation></semantics></math> 停留在寄存器或共享内存，一套 RMSNorm 的 Required Global Memory 理论下界为：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">M</mi><mi mathvariant="normal">S</mi><mi mathvariant="normal">N</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">m</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>10</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>+</mo><mn>20</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><mi>B</mi><mi>S</mi></mrow></menclose><annotation encoding="application/x-tex">
 \boxed{
 M_{\mathrm{RMSNorm}}(B,S)=10\,\mathrm{KiB}+20\,\mathrm{KiB}\cdot BS
@@ -700,7 +704,7 @@ M_{\mathrm{Layer0\ Norm,min}}(B,S)=20\,\mathrm{KiB}+20\,\mathrm{KiB}\cdot BS
 <li>本节入口 RMSNorm 沿单路 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>5120</mn><annotation encoding="application/x-tex">5120</annotation></semantics></math> 维统计，并乘独立的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>γ</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\gamma:[5120]</annotation></semantics></math>。</li>
 <li>第 2 节 mHC 的 RMS 因子沿四路展平后的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>4</mn><mo>×</mo><mn>5120</mn><mo>=</mo><mn>20480</mn></mrow><annotation encoding="application/x-tex">4\times5120=20480</annotation></semantics></math> 维统计，只服务于动态系数投影，没有独立的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>γ</mi><annotation encoding="application/x-tex">\gamma</annotation></semantics></math>。</li>
 </ul>
-<p>两套入口 Norm 的位置和调用顺序可直接在 <code>Block.forward</code> 中看到：<code>hc_pre → attn_norm → Attention</code>，随后是 <code>hc_pre → ffn_norm → MoE</code>。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Block</code></a></p>
+<p>两套入口 Norm 的位置和调用顺序可直接在 <code>Block.forward</code> 中看到：<code>hc_pre → attn_norm → Attention</code>，随后是 <code>hc_pre → ffn_norm → MoE</code>。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1148-L1235">核查：固定 revision 的 <code>Block</code></a></p>
 <h2 id="局部-attention-swa">4. 局部 Attention / SWA</h2>
 <p>这一节沿用 mHC 部分的展开方式：先逐步跟踪张量，再给公式与显存账。记 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math>，窗口宽度 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi><mo>=</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">W=128</annotation></semantics></math>；输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[N,5120]</annotation></semantics></math> 已经过 Attention 入口 RMSNorm。</p>
 <h3 id="生成-q共享-kv-与局部窗口">4.1 生成 Q、共享 KV 与局部窗口</h3>
@@ -779,7 +783,7 @@ C,&amp;S\ge 128\\
 \operatorname{Tail}_{S_{\mathrm{win}}}\!\left(\operatorname{Concat}(C_{\mathrm{cache}},C)\right),&amp;S&lt;128
 \end{cases}
 </annotation></semantics></math></p>
-<p>这里的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">C_{\mathrm{win}}</annotation></semantics></math> 是便于理解的逻辑视图，不是实现必须物化的新张量。上游实现用 <code>topk_idxs</code> 直接索引交给 attention kernel 的 KV：prefill 索引当前序列 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math>，同时把末尾 KV 写入环形 <code>window_kv_cache</code>；decode 再按从旧到新的顺序索引该缓存的 128 个槽。prefill 为每个 Query 生成至多 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>S</mi><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\min(S,128)</annotation></semantics></math> 个因果索引，无效槽填 <code>-1</code>。即使此时概念上的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mi>S</mi><mo>&gt;</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">S_{\mathrm{win}}=S&gt;128</annotation></semantics></math>，下一步的窗口 mask 仍保证单个 Query 最多只参与 128 个 KV。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Attention._window_kv</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py"><code>get_window_topk_idxs</code></a></p>
+<p>这里的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">C_{\mathrm{win}}</annotation></semantics></math> 是便于理解的逻辑视图，不是实现必须物化的新张量。上游实现用 <code>topk_idxs</code> 直接索引交给 attention kernel 的 KV：prefill 索引当前序列 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math>，同时把末尾 KV 写入环形 <code>window_kv_cache</code>；decode 再按从旧到新的顺序索引该缓存的 128 个槽。prefill 为每个 Query 生成至多 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>S</mi><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\min(S,128)</annotation></semantics></math> 个因果索引，无效槽填 <code>-1</code>。即使此时概念上的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mi>S</mi><mo>&gt;</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">S_{\mathrm{win}}=S&gt;128</annotation></semantics></math>，下一步的窗口 mask 仍保证单个 Query 最多只参与 128 个 KV。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L940-L960">核查：固定 revision 的 <code>Attention._window_kv</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py"><code>get_window_topk_idxs</code></a></p>
 <h3 id="swa-maskattention-sink-与在线-softmax">4.2 SWA mask、attention sink 与在线 softmax</h3>
 <p><img src="assets/07_swa_mask_sink_softmax.png" alt="图 8：128-token SWA mask、sink softmax 与共享 V 汇总" /></p>
 <p>固定会话 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>、Query 头 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>h</mi><annotation encoding="application/x-tex">h</annotation></semantics></math> 和 Query 位置 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>。令当前内核实际遍历的候选数为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>K</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">x</mi></mrow></msub><annotation encoding="application/x-tex">K_{\mathrm{idx}}</annotation></semantics></math>；prefill 时 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>K</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">x</mi></mrow></msub><mo>=</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>S</mi><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">K_{\mathrm{idx}}=\min(S,128)</annotation></semantics></math>，decode 时为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>128</mn><annotation encoding="application/x-tex">128</annotation></semantics></math>。对候选 KV 位置 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>j</mi><annotation encoding="application/x-tex">j</annotation></semantics></math>，原始得分为：</p>
@@ -801,11 +805,11 @@ P_{b,h,i,j}=
 \frac{\exp(Z^{\mathrm{attn}}_{b,h,i,j})}
 {\exp(a_h)+\sum_k\exp(Z^{\mathrm{attn}}_{b,h,i,k})}
 </annotation></semantics></math></p>
-<p>实际内核采用在线、数值稳定的形式。令</p>
+<p>在数学上，可以把 sink 当成一个“无 value 的额外 logit”，并统一取最大值：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>m</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><mo>max</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>a</mi><mi>h</mi></msub><mo>,</mo><munder><mo>max</mo><mi>k</mi></munder><msubsup><mi>Z</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>k</mi></mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">n</mi></mrow></msubsup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
 m_{b,h,i}=\max\!\left(a_h,\max_k Z^{\mathrm{attn}}_{b,h,i,k}\right)
 </annotation></semantics></math></p>
-<p>则</p>
+<p>于是可写成：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>j</mi></mrow></msub><mo>=</mo><mfrac><mrow><mo>exp</mo><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>Z</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>j</mi></mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">n</mi></mrow></msubsup><mo>−</mo><msub><mi>m</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><mrow><mo>exp</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>a</mi><mi>h</mi></msub><mo>−</mo><msub><mi>m</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><munder><mo>∑</mo><mi>k</mi></munder><mo>exp</mo><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>Z</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>k</mi></mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">n</mi></mrow></msubsup><mo>−</mo><msub><mi>m</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow></mfrac></mrow><annotation encoding="application/x-tex">
 P_{b,h,i,j}=
 \frac{\exp(Z^{\mathrm{attn}}_{b,h,i,j}-m_{b,h,i})}
@@ -814,7 +818,12 @@ P_{b,h,i,j}=
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><msub><mi>′</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>h</mi></mrow></msub><mo>=</mo><munder><mo>∑</mo><mi>j</mi></munder><msub><mi>P</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>j</mi></mrow></msub><msub><mi>C</mi><mrow><mi>b</mi><mo>,</mo><mi>j</mi></mrow></msub></mrow><annotation encoding="application/x-tex">
 O&#39;_{b,i,h}=\sum_j P_{b,h,i,j}C_{b,j}
 </annotation></semantics></math></p>
-<p>因为 sink 吸收了部分概率质量，真实 token 的权重和满足 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>j</mi></msub><msub><mi>P</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>j</mi></mrow></msub><mo>&lt;</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\sum_jP_{b,h,i,j}&lt;1</annotation></semantics></math>，而不是强制等于 1。内核以 FP32 累积最大值、指数和及输出，再写回 BF16；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>E</mi><annotation encoding="application/x-tex">E</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>Z</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">n</mi></mrow></msup><annotation encoding="application/x-tex">Z^{\mathrm{attn}}</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math> 都只是逻辑上的分块，不会完整落到全局显存。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">核查：<code>sparse_attn</code></a></p>
+<p>上式是便于推导的稳定等价形式，不是官方 kernel 对 max 的逐行复述。固定 revision 的 <code>sparse_attn_kernel</code> 实际只对真实 KV score 维护 running max：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>m</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi></mrow><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">V</mi></mrow></msubsup><mo>=</mo><munder><mo>max</mo><mi>k</mi></munder><msubsup><mi>Z</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>k</mi></mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">n</mi></mrow></msubsup></mrow><annotation encoding="application/x-tex">
+m^{\mathrm{KV}}_{b,h,i}=\max_k Z^{\mathrm{attn}}_{b,h,i,k}
+</annotation></semantics></math></p>
+<p>处理完所有 KV block 后，它再把 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>exp</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>a</mi><mi>h</mi></msub><mo>−</mo><msubsup><mi>m</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi></mrow><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">V</mi></mrow></msubsup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\exp(a_h-m^{\mathrm{KV}}_{b,h,i})</annotation></semantics></math> 加入分母，并用该分母归一化累计输出。换言之，sink 不参与 kernel 的 running-max 更新，但数学结果与上面的直接定义一致。</p>
+<p>因为 sink 吸收了部分概率质量，真实 token 的权重和满足 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>j</mi></msub><msub><mi>P</mi><mrow><mi>b</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>j</mi></mrow></msub><mo>&lt;</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\sum_jP_{b,h,i,j}&lt;1</annotation></semantics></math>，而不是强制等于 1。内核以 FP32 累积真实 score 的最大值、指数和及输出，再写回 BF16；<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>E</mi><annotation encoding="application/x-tex">E</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>Z</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">n</mi></mrow></msup><annotation encoding="application/x-tex">Z^{\mathrm{attn}}</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math> 都只是逻辑上的分块，不会完整落到全局显存。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py#L568-L630">核查：固定 revision 的 <code>sparse_attn_kernel</code></a></p>
 <table>
 <colgroup>
 <col style="width: 33%" />
@@ -884,8 +893,82 @@ W_{ob}:[5120,8192]
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>64</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>8</mn><mo>,</mo><mn>4096</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>8</mn><mo>,</mo><mn>1024</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>8192</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
 [N,64,512]\to[N,8,4096]\to[N,8,1024]\to[N,8192]\to[N,5120]
 </annotation></semantics></math></p>
-<p>两级之间没有额外非线性。最终单路输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">O:[N,5120]</annotation></semantics></math> 交给当前 Attention 侧的 mHC 融合。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">核查：<code>Attention.forward</code></a></p>
-<h3 id="参数量与最低全局显存">4.4 参数量与最低全局显存</h3>
+<p>两级之间没有额外非线性。最终单路输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">O:[N,5120]</annotation></semantics></math> 交给当前 Attention 侧的 mHC 融合。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1005-L1030">核查：固定 revision 的 <code>Attention.forward</code></a></p>
+<h3 id="前向计算量">4.4 前向计算量</h3>
+<p>下面统计数学前向中的标量加法、减法和乘法；量化/反量化、数据搬运、索引与 dtype 转换不计。RoPE 的每个二维旋转按 4 次乘法和 2 次加 / 减统计。对 token <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">(</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(b,i)</annotation></semantics></math>，令</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><mtext mathvariant="normal">该 Query 实际参与数学 Attention 的有效 KV 数</mtext><mo>,</mo><mspace width="2.0em"></mspace><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>=</mo><mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></munder><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>≤</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">
+L_{b,i}=\text{该 Query 实际参与数学 Attention 的有效 KV 数},
+\qquad
+\overline L=\frac{1}{N}\sum_{b,i}L_{b,i}\le128
+</annotation></semantics></math></p>
+<p>因果窗口始终包含 Query 自身，所以 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>≥</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">L_{b,i}\ge1</annotation></semantics></math>。各部分的一 token 计数为：</p>
+<table>
+<thead>
+<tr class="header">
+<th>阶段</th>
+<th style="text-align: right;">加 / 减 / 乘</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mrow><mi>Q</mi><mi>a</mi></mrow></msub><annotation encoding="application/x-tex">W_{Qa}</annotation></semantics></math> 投影</td>
+<td style="text-align: right;">13,105,920</td>
+</tr>
+<tr class="even">
+<td>1280 维 RMSNorm</td>
+<td style="text-align: right;">5,121</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mrow><mi>Q</mi><mi>b</mi></mrow></msub><annotation encoding="application/x-tex">W_{Qb}</annotation></semantics></math> 投影</td>
+<td style="text-align: right;">83,853,312</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mrow><mi>K</mi><mi>V</mi></mrow></msub><annotation encoding="application/x-tex">W_{KV}</annotation></semantics></math> 投影</td>
+<td style="text-align: right;">5,242,368</td>
+</tr>
+<tr class="odd">
+<td>512 维 RMSNorm</td>
+<td style="text-align: right;">2,049</td>
+</tr>
+<tr class="even">
+<td>Q RoPE、KV RoPE、输出 inverse RoPE</td>
+<td style="text-align: right;">24,768</td>
+</tr>
+<tr class="odd">
+<td>64 头 score 点积与缩放</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>65</mn><mo>,</mo><mn>536</mn><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub></mrow><annotation encoding="application/x-tex">65,536L_{b,i}</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Sink Softmax 的 score/sink 平移与分母求和</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>128</mn><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>+</mo><mn>64</mn></mrow><annotation encoding="application/x-tex">128L_{b,i}+64</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mi>C</mi></mrow><annotation encoding="application/x-tex">PC</annotation></semantics></math> 加权汇总</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>65</mn><mo>,</mo><mn>536</mn><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>−</mo><mn>32</mn><mo>,</mo><mn>768</mn></mrow><annotation encoding="application/x-tex">65,536L_{b,i}-32,768</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>8 组 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mrow><mi>o</mi><mi>a</mi></mrow></msub><annotation encoding="application/x-tex">W_{oa}</annotation></semantics></math> 投影</td>
+<td style="text-align: right;">67,100,672</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mrow><mi>o</mi><mi>b</mi></mrow></msub><annotation encoding="application/x-tex">W_{ob}</annotation></semantics></math> 投影</td>
+<td style="text-align: right;">83,880,960</td>
+</tr>
+<tr class="even">
+<td><strong>合计</strong></td>
+<td style="text-align: right;"><strong><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>253</mn><mo>,</mo><mn>182</mn><mo>,</mo><mn>466</mn><mo>+</mo><mn>131</mn><mo>,</mo><mn>200</mn><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub></mrow><annotation encoding="application/x-tex">253,182,466+131,200L_{b,i}</annotation></semantics></math></strong></td>
+</tr>
+</tbody>
+</table>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mi>C</mi></mrow><annotation encoding="application/x-tex">PC</annotation></semantics></math> 的每个输出分量使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><annotation encoding="application/x-tex">L_{b,i}</annotation></semantics></math> 次乘法和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>−</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">L_{b,i}-1</annotation></semantics></math> 次加法；这解释了常数项中的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>−</mo><mn>32</mn><mo>,</mo><mn>768</mn></mrow><annotation encoding="application/x-tex">-32,768</annotation></semantics></math>。因此处理 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math> 个 token 时：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">S</mi><mi mathvariant="normal">W</mi><mi mathvariant="normal">A</mi><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>=</mo><mi>N</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>253182466</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+C_{\mathrm{SWA,mul/add/sub}}
+=N\left(253182466+131200\overline L\right)
+}
+</annotation></semantics></math></p>
+<p>这个公式按数学上的 Sink Softmax 与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mi>C</mi></mrow><annotation encoding="application/x-tex">PC</annotation></semantics></math> 两步统计，不等同于分块 online-softmax kernel 的实际指令数。两次内部 RMSNorm 另有 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">2N</annotation></semantics></math> 次 <code>rsqrt</code>；softmax 的 exp、除法、比较以及 kernel 为 running max 重标定累计量的操作，也没有混入主公式。</p>
+<h3 id="参数量与-required-global-memory-理论下界理想融合口径">4.5 参数量与 Required Global Memory 理论下界（理想融合口径）</h3>
 <p>先区分两个口径：<strong>逻辑参数量</strong>统计模型中有多少个标量；<strong>驻留字节数</strong>按参考实现实际的 GPU dtype 和 FP8 scale 计算。SWA 的逻辑参数量仍是第 6 节汇总所用的 <strong>126,617,408</strong>：</p>
 <table>
 <thead>
@@ -1001,7 +1084,7 @@ W_{ob}:[5120,8192]
 </tbody>
 </table>
 <p>令 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mo>max</mo></msub><annotation encoding="application/x-tex">B_{\max}</annotation></semantics></math> 为预分配最大 batch，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mo>max</mo></msub><annotation encoding="application/x-tex">S_{\max}</annotation></semantics></math> 为 RoPE 表覆盖的最大位置。持续状态还包括 BF16 <code>window_kv_cache:[B_max,128,512]</code>，占 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">131072B_{\max}</annotation></semantics></math> 字节；以及 <code>freqs_cis:[S_max,32]</code> 的 Complex64 表，占 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">256S_{\max}</annotation></semantics></math> 字节。最后的 32 来自 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>64</mn><annotation encoding="application/x-tex">64</annotation></semantics></math> 个实数 RoPE 维两两组成复数。</p>
-<p>若只计算该 SWA 模块完成一次前向所必需的全局显存，并假设理想融合/tiling 让 Q、分数、概率和中间投影停留在寄存器或共享内存，则需要长期保留的动态张量只有 BF16 输入与输出，各占 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10240</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">10240N</annotation></semantics></math> 字节。因此理论下界为：</p>
+<p>若只计算该 SWA 模块完成一次前向所必需的 Global Memory，并假设理想融合/tiling 让 Q、分数、概率和中间投影停留在寄存器或共享内存，则需要长期保留的动态张量只有 BF16 输入与输出，各占 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10240</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">10240N</annotation></semantics></math> 字节。因此 Required Global Memory 理论下界为：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mo>min</mo></msub><mo>=</mo><mn>152.84</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>+</mo><mn>20</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><mi>N</mi><mo>+</mo><mn>128</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><msub><mi>B</mi><mo>max</mo></msub><mo>+</mo><mn>0.25</mn><mspace width="0.167em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><msub><mi>S</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">
 M_{\min}=152.84\,\mathrm{MiB}+20\,\mathrm{KiB}\cdot N
 +128\,\mathrm{KiB}\cdot B_{\max}
@@ -1054,9 +1137,9 @@ M_{\min}=152.84\,\mathrm{MiB}+20\,\mathrm{KiB}\cdot N
 </tr>
 </tbody>
 </table>
-<p>当前参考路径先对 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math> 做原地 FP8 量化—反量化模拟，再把结果以 BF16 写入窗口缓存；因此这里按 BF16 cache 计数。<code>freqs_cis</code> 还可被 RoPE 配置相同的层共享，做整模型汇总时不应逐层重复计算。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">核查：<code>act_quant(inplace=True)</code> 与 <code>sparse_attn</code></a></p>
+<p>当前参考路径先对 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math> 做原地 FP8 量化—反量化模拟，再把结果以 BF16 写入窗口缓存；因此这里按 BF16 cache 计数。<code>freqs_cis</code> 在单层只计一次；虽然相同 RoPE 配置的层理论上可以共享该只读表，固定 revision 的构造器仍为每层分别注册 buffer，整模型实测不能未经验证就按共享扣减。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L853-L938">核查：固定 revision 的 <code>Attention</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py"><code>act_quant(inplace=True)</code> 与 <code>sparse_attn</code></a></p>
 <h2 id="moe-前馈计算">5. MoE 前馈计算</h2>
-<p>这一节继续沿用前文的展开方式：先跟踪 Router、专家参数索引和专家计算，再核算参数、计算量与最低全局显存。记</p>
+<p>这一节继续沿用前文的展开方式：先跟踪 Router、专家参数索引和专家计算，再核算参数、计算量与 Required Global Memory 理论下界。记</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi><mo>,</mo><mspace width="2.0em"></mspace><mi>H</mi><mo>=</mo><mn>5120</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>M</mi><mo>=</mo><mn>2304</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>E</mi><mo>=</mo><mn>384</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><mo>=</mo><mn>6</mn></mrow><annotation encoding="application/x-tex">
 N=BS,\qquad H=5120,\qquad M=2304,\qquad E=384,\qquad K=6
 </annotation></semantics></math></p>
@@ -1195,7 +1278,7 @@ N_{\mathrm{MoE}}
 }
 </annotation></semantics></math></p>
 <p>每个 token 虽然只执行 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>6</mn><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">6+1</annotation></semantics></math> 个专家，但 Router 仍要计算全部 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>384</mn><annotation encoding="application/x-tex">384</annotation></semantics></math> 个分数；“激活参数量”也不能直接当成单 token 的实际显存读量，因为同一 expert 的权重会在分配给它的一批 token 间复用。</p>
-<h3 id="前向计算量">5.5 前向计算量</h3>
+<h3 id="前向计算量-1">5.5 前向计算量</h3>
 <p>下面统计<strong>数学前向</strong>：加法、减法和乘法各计 1 次；<code>exp</code>、<code>log</code>、<code>sqrt</code>、除法、比较和 Top-K 单列；不计量化、反量化、数据搬运、参数索引、expert dispatch 和通信。SiLU 按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>x</mi><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>x</mi></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">x/(1+e^{-x})</annotation></semantics></math> 展开；实际 kernel 可以融合这些逐元素步骤。</p>
 <table>
 <colgroup>
@@ -1262,7 +1345,7 @@ N_{\mathrm{MoE}}
 \boxed{C_{\mathrm{MoE,mul/add/sub}}=499425676N}
 </annotation></semantics></math></p>
 <p>其余按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math> 线性放大；Top-K 内部比较次数取决于实现，未伪装成固定常数。纯文本调用不传 <code>image_mask</code> 时，文本/视觉条件选择也可省略。</p>
-<h3 id="权重存储与最低全局显存">5.6 权重存储与最低全局显存</h3>
+<h3 id="权重存储与-required-global-memory-理论下界理想融合口径">5.6 权重存储与 Required Global Memory 理论下界（理想融合口径）</h3>
 <p>这里同时区分<strong>逻辑参数量</strong>和<strong>实际驻留字节</strong>。按官方参考配置：Router 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>g</mi></msub><annotation encoding="application/x-tex">W_g</annotation></semantics></math> 为 BF16，两个修正量为 FP32；routed experts 使用两个 FP4 值打包为 1 Byte，并沿 K 维每 32 个元素保存 1 个 E8M0 scale；shared expert 使用 FP8 权重和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>32</mn><mo>×</mo><mn>32</mn></mrow><annotation encoding="application/x-tex">32\times32</annotation></semantics></math> 的 E8M0 scale。</p>
 <table>
 <colgroup>
@@ -1401,7 +1484,7 @@ M_{\mathrm{routed}}
 </tr>
 </tbody>
 </table>
-<p>若只统计 <code>world_size=1</code> 下完整参数池、输入和输出，并假设 Router、expert dispatch、矩阵分块与 reduce 的中间量不完整落到 Global Memory，理论下界为：</p>
+<p>若只统计 <code>world_size=1</code> 下完整参数池、输入和输出，并假设 Router、expert dispatch、矩阵分块与 reduce 的中间量不完整落到 Global Memory，Required Global Memory 理论下界为：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">E</mi><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>7258804992</mn><mo>+</mo><mn>20480</mn><mi>B</mi><mi>S</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
 \boxed{
 M_{\mathrm{MoE,min}}(B,S)
@@ -1415,50 +1498,229 @@ M_{\mathrm{param/rank}}(P)
 =\frac{7219445760}{P}+39359232\ \mathrm{Byte}
 </annotation></semantics></math></p>
 <p>FP4 的 <code>[out,in/2]</code> 打包与 <code>[out,in/32]</code> E8M0 scale 形状可在官方 <code>Linear</code> 与 <code>fp4_gemm</code> 中直接核查。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L449-L479">核查：固定 revision 的 <code>Linear</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py#L803-L832"><code>fp4_gemm</code></a></p>
-<h2 id="本层参数与状态汇总">6. 本层参数与状态汇总</h2>
-<p>下表按完整 Layer 0 配置统计逻辑参数量，包含当前文本路径未使用的 <code>bias_vl</code>；不含 embedding、输出头和量化 scale，也不把动态 mHC 系数或 KV cache 算成参数：</p>
+<h2 id="layer-0-整层汇总参数计算显存与状态">6. Layer 0 整层汇总：参数、计算、显存与状态</h2>
+<p>本章不重复前面的模块推导，只把固定 revision 下的 Layer 0 文本路径结算到同一口径。记 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math>。</p>
+<h3 id="整层输入输出与执行顺序">6.1 整层输入、输出与执行顺序</h3>
+<p>Layer 0 的外部输入为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+X_{\mathrm{in}}:[N,4,5120],\qquad
+\mathrm{pre}_{\mathrm{in}}:[N,4]
+</annotation></semantics></math></p>
+<p>其中四路 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">X_{\mathrm{in}}</annotation></semantics></math> 由 embedding 复制得到，<code>make_identity_pre_mix</code> 实际创建 FP32 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>1</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\mathrm{pre}_{\mathrm{in}}=[1,0,0,0]</annotation></semantics></math>。层内顺序为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mrow><mi>A</mi><mo>,</mo><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>→</mo><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">M</mi><mi mathvariant="normal">S</mi><mi mathvariant="normal">N</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">m</mi></mrow><mi>A</mi></msub><mo>→</mo><mrow><mi mathvariant="normal">S</mi><mi mathvariant="normal">W</mi><mi mathvariant="normal">A</mi></mrow><mo>→</mo><msub><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mrow><mi>A</mi><mo>,</mo><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub></mrow><annotation encoding="application/x-tex">
+\mathrm{mHC}_{A,\mathrm{pre}}
+\rightarrow\mathrm{RMSNorm}_{A}
+\rightarrow\mathrm{SWA}
+\rightarrow\mathrm{mHC}_{A,\mathrm{post}}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>→</mo><msub><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mrow><mi>F</mi><mo>,</mo><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>→</mo><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">M</mi><mi mathvariant="normal">S</mi><mi mathvariant="normal">N</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">m</mi></mrow><mi>F</mi></msub><mo>→</mo><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">E</mi></mrow><mo>→</mo><msub><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi></mrow><mrow><mi>F</mi><mo>,</mo><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub></mrow><annotation encoding="application/x-tex">
+\rightarrow\mathrm{mHC}_{F,\mathrm{pre}}
+\rightarrow\mathrm{RMSNorm}_{F}
+\rightarrow\mathrm{MoE}
+\rightarrow\mathrm{mHC}_{F,\mathrm{post}}
+</annotation></semantics></math></p>
+<p>最终输出：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+X_{\mathrm{out}}:[N,4,5120],\qquad
+\mathrm{pre}_{\mathrm{next}}:[N,4]
+</annotation></semantics></math></p>
+<p><code>pre_next</code> 是本层 MoE 侧 mHC 生成的动态运行时状态，供 Layer 1 的 Attention 入口汇聚使用，不是模型参数。配置中 Layer 0 的 <code>compress_ratio=0</code>，且它不在 <code>kv_source_layers</code>、<code>index_source_layers</code> 或 <code>engram_layer_ids</code> 内，所以本层没有 compressed/global KV、Indexer 或 Engram 路径。</p>
+<h3 id="整层逻辑参数量与-gpu-驻留字节">6.2 整层逻辑参数量与 GPU 驻留字节</h3>
+<p>下表包含当前文本路径不使用、但仍属于 Layer 0 参数的 <code>bias_vl</code>；不含 embedding、输出头和运行时状态。逻辑参数量统计标量个数，GPU 驻留字节则纳入 FP4 / FP8 打包、BF16 / FP32 以及量化 scale：</p>
 <table>
 <thead>
 <tr class="header">
 <th>部分</th>
 <th style="text-align: right;">逻辑参数量</th>
+<th style="text-align: right;">GPU 驻留字节</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>Attention 侧 mHC 系数生成</td>
-<td style="text-align: right;">491,547</td>
+<td>Attention、MoE 两套 mHC</td>
+<td style="text-align: right;">983,094</td>
+<td style="text-align: right;">3,932,376 B</td>
 </tr>
 <tr class="even">
-<td>MoE 侧 mHC 系数生成</td>
-<td style="text-align: right;">491,547</td>
-</tr>
-<tr class="odd">
 <td>两个入口 RMSNorm</td>
 <td style="text-align: right;">10,240</td>
-</tr>
-<tr class="even">
-<td>SWA（投影、内部 Norm 与 64 个 sink）</td>
-<td style="text-align: right;">126,617,408</td>
+<td style="text-align: right;">20,480 B</td>
 </tr>
 <tr class="odd">
-<td>MoE（384＋1 个专家、路由投影、两套修正量）</td>
-<td style="text-align: right;">13,626,901,248</td>
+<td>Local Attention / SWA</td>
+<td style="text-align: right;">126,617,408</td>
+<td style="text-align: right;">160,264,704 B</td>
 </tr>
 <tr class="even">
+<td>MoE FFN</td>
+<td style="text-align: right;">13,626,901,248</td>
+<td style="text-align: right;">7,258,804,992 B</td>
+</tr>
+<tr class="odd">
 <td><strong>Layer 0 合计</strong></td>
 <td style="text-align: right;"><strong>13,754,511,990</strong></td>
+<td style="text-align: right;"><strong>7,423,022,552 B</strong></td>
 </tr>
 </tbody>
 </table>
-<p>单专家参数量为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>3</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2304</mn><mo>=</mo><mn>35389440</mn></mrow><annotation encoding="application/x-tex">3\times5120\times2304=35389440</annotation></semantics></math>；MoE 合计 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>385</mn><mo>×</mo><mn>35389440</mn><mo>+</mo><mn>384</mn><mo>×</mo><mn>5120</mn><mo>+</mo><mn>2</mn><mo>×</mo><mn>384</mn></mrow><annotation encoding="application/x-tex">385\times35389440+384\times5120+2\times384</annotation></semantics></math>，分别对应 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>384</mn><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">384+1</annotation></semantics></math> 个专家、路由投影和两套修正向量。每个 token 只激活 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>6</mn><annotation encoding="application/x-tex">6</annotation></semantics></math> 个路由专家与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mn>1</mn><annotation encoding="application/x-tex">1</annotation></semantics></math> 个共享专家，总参数量不等于当次激活参数量。</p>
-<p>本层向下一层输出四路残差 <code>[BxS,4,5120]</code> 和 <code>pre_next:[BxS,4]</code>；后者供下一层 Attention 入口汇聚使用。对 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>B</mi><annotation encoding="application/x-tex">B</annotation></semantics></math> 个会话，本层局部 KV 缓存的逻辑容量为 <code>[B,128,512]</code>，没有独立的全局缓存；当前参考路径以 BF16 保存，单会话占 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>128</mn><mo>×</mo><mn>512</mn><mo>×</mo><mn>2</mn><mo>=</mo><mn>131072</mn></mrow><annotation encoding="application/x-tex">128\times512\times2=131072</annotation></semantics></math> 字节。</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>P</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">0</mn></mrow></msub><mo>=</mo><mn>13754511990</mn><mo>≈</mo><mn>13.755</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">B</mi></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{P_{\mathrm{Layer0}}=13754511990\approx13.755\ \mathrm{B}}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi></mrow></msub><mo>=</mo><mn>7423022552</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mo>≈</mo><mn>7.423</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">B</mi></mrow><mo>≈</mo><mn>6.913</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+M_{\mathrm{param}}=7423022552\ \mathrm{Byte}
+\approx7.423\ \mathrm{GB}
+\approx6.913\ \mathrm{GiB}
+}
+</annotation></semantics></math></p>
+<p>每个 token 只执行 6 个 routed experts 和 1 个 shared expert；这不会减少完整专家池的常驻参数字节。</p>
+<h3 id="整层前向计算量">6.3 整层前向计算量</h3>
+<p>沿用各模块“数学前向的标量加、减、乘”口径：</p>
+<table>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th style="text-align: right;">每 token 的加 / 减 / 乘</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>两套 mHC：官方通用路径</td>
+<td style="text-align: right;">2,489,802</td>
+</tr>
+<tr class="even">
+<td>两个入口 RMSNorm</td>
+<td style="text-align: right;">40,962</td>
+</tr>
+<tr class="odd">
+<td>Local Attention / SWA</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>253</mn><mo>,</mo><mn>182</mn><mo>,</mo><mn>466</mn><mo>+</mo><mn>131</mn><mo>,</mo><mn>200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover></mrow><annotation encoding="application/x-tex">253,182,466+131,200\overline L</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>MoE FFN</td>
+<td style="text-align: right;">499,425,676</td>
+</tr>
+<tr class="odd">
+<td><strong>Layer 0 合计</strong></td>
+<td style="text-align: right;"><strong><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>755</mn><mo>,</mo><mn>138</mn><mo>,</mo><mn>906</mn><mo>+</mo><mn>131</mn><mo>,</mo><mn>200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover></mrow><annotation encoding="application/x-tex">755,138,906+131,200\overline L</annotation></semantics></math></strong></td>
+</tr>
+</tbody>
+</table>
+<p>这里</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>=</mo><mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></munder><msub><mi>L</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><mn>1</mn><mo>≤</mo><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>≤</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">
+\overline L=\frac{1}{N}\sum_{b,i}L_{b,i},\qquad1\le\overline L\le128
+</annotation></semantics></math></p>
+<p>因此官方通用路径为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">0</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>=</mo><mi>N</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>755138906</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+C_{\mathrm{Layer0,mul/add/sub}}
+=N\left(755138906+131200\overline L\right)
+}
+</annotation></semantics></math></p>
+<p>若优化实现把 Layer 0 首次 identity-pre 常量折叠，才可减去 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>35840</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">35840N</annotation></semantics></math>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">0</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">o</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mi>N</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>755103066</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+C_{\mathrm{Layer0,opt}}
+=N\left(755103066+131200\overline L\right)
+}
+</annotation></semantics></math></p>
+<p>后一个值是理论优化值，不是固定 revision 官方 reference 当前执行的路径。exp、log、sqrt、<code>rsqrt</code>、除法、比较和 Top-K 仍按各模块章节单列，不在整层主公式中重复相加。</p>
+<h3 id="整层-required-global-memory-理论下界理想融合口径">6.4 整层 Required Global Memory 理论下界（理想融合口径）</h3>
+<p>本节只统计参数与 scale、完整层边界 I/O、本层持久缓存及 RoPE 表；假设层内中间激活可融合、分块或复用，不完整物化到 Global Memory。</p>
+<p>外部输入占：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mi>N</mi><mo>×</mo><mn>4</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2</mn><mo>+</mo><mi>N</mi><mo>×</mo><mn>4</mn><mo>×</mo><mn>4</mn><mo>=</mo><mn>40976</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{input}}
+=N\times4\times5120\times2+N\times4\times4
+=40976N\ \mathrm{Byte}
+</annotation></semantics></math></p>
+<p>输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">X_{\mathrm{out}}</annotation></semantics></math> 与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">\mathrm{pre}_{\mathrm{next}}</annotation></semantics></math> 同样占 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>40976</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">40976N</annotation></semantics></math> Byte。Persistent Runtime Storage 包括：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">w</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">v</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><mn>128</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" form="prefix" mathvariant="normal">(</mo><mi mathvariant="normal">B</mi><mi mathvariant="normal">F</mi><mn mathvariant="normal">16</mn><mo stretchy="true" form="postfix" mathvariant="normal">)</mo></mrow><mo>=</mo><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
+\mathrm{window\_kv\_cache}:[B_{\max},128,512] \mathrm{(BF16)}
+=131072B_{\max}\ \mathrm{Byte}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">s</mi></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>S</mi><mo>max</mo></msub><mo>,</mo><mn>32</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="0.222em"></mspace><mrow><mo stretchy="true" form="prefix" mathvariant="normal">(</mo><mi mathvariant="normal">C</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mn mathvariant="normal">64</mn><mo stretchy="true" form="postfix" mathvariant="normal">)</mo></mrow><mo>=</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow><annotation encoding="application/x-tex">
+\mathrm{freqs\_cis}:[S_{\max},32]\ \mathrm{(Complex64)}
+=256S_{\max}\ \mathrm{Byte}
+</annotation></semantics></math></p>
+<p>所以：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><mtable><mtr><mtd columnalign="right" style="text-align: right"><msub><mi>M</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">0</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mrow></mrow></mtd><mtd columnalign="left" style="text-align: left"><mn>7423022552</mn></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>81952</mn><mi>N</mi></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub></mtd></mtr></mtable><mspace width="1.0em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+\begin{aligned}
+M_{\mathrm{Layer0,min}}={}&amp;7423022552\\
+&amp;+81952N\\
+&amp;+131072B_{\max}\\
+&amp;+256S_{\max}
+\end{aligned}
+\quad\mathrm{Byte}
+}
+</annotation></semantics></math></p>
+<p>即：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">0</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>≈</mo><mn>6.913</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>+</mo><mn>80</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><mi>N</mi><mo>+</mo><mn>32</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mo>+</mo><mn>128</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><msub><mi>B</mi><mo>max</mo></msub><mo>+</mo><mn>0.25</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">K</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow><mo>⋅</mo><msub><mi>S</mi><mo>max</mo></msub></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+M_{\mathrm{Layer0,min}}
+\approx6.913\ \mathrm{GiB}
++80\ \mathrm{KiB}\cdot N+32N\ \mathrm{Byte}
++128\ \mathrm{KiB}\cdot B_{\max}
++0.25\ \mathrm{KiB}\cdot S_{\max}
+}
+</annotation></semantics></math></p>
+<p>官方 reference 会物化 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\mathrm{pre}_{\mathrm{in}}:[N,4]</annotation></semantics></math>；若某个优化实现把 identity-pre 连同首次 <code>hc_pre</code> 一并常量折叠，边界存储可再减少 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>16</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">16N</annotation></semantics></math> Byte。<code>freqs_cis</code> 在本层只计一次；相同 RoPE 配置的层理论上可以共享该只读表，但固定 revision 的 <code>Attention</code> 构造器仍为每层分别注册 buffer，整模型实测不能未经验证就按共享扣减。本式不是进程峰值显存，也不是每步显存读写量；未融合激活、allocator 保留区、kernel / grouped-GEMM workspace、dispatch 与通信缓冲都会增加实测值。</p>
+<h3 id="本层状态与跨层输出">6.5 本层状态与跨层输出</h3>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>对象</th>
+<th>Shape</th>
+<th>dtype</th>
+<th>去向 / 生命周期</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>四路残差 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">X_{\mathrm{out}}</annotation></semantics></math></td>
+<td><code>[N,4,5120]</code></td>
+<td>BF16</td>
+<td>下一层 Attention 侧 mHC</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">\mathrm{pre}_{\mathrm{next}}</annotation></semantics></math></td>
+<td><code>[N,4]</code></td>
+<td>FP32</td>
+<td>下一层 Attention 入口汇聚</td>
+</tr>
+<tr class="odd">
+<td><code>window_kv_cache</code></td>
+<td><code>[B_max,128,512]</code></td>
+<td>BF16</td>
+<td>本层后续 decode；环形保留最近 128 个 token</td>
+</tr>
+<tr class="even">
+<td><code>freqs_cis</code></td>
+<td><code>[S_max,32]</code></td>
+<td>Complex64</td>
+<td>本层 RoPE / inverse RoPE 的只读 buffer</td>
+</tr>
+</tbody>
+</table>
+<p>Layer 0 不产生 compressed/global KV、Indexer 状态或 Engram 状态。四路残差与 <code>pre_next</code> 是层间运行时状态；local KV cache 与 RoPE 表是随模块驻留的 non-persistent buffer。</p>
+<h3 id="本层结论">6.6 本层结论</h3>
+<ol type="1">
+<li><strong>参数与常驻显存主要由 MoE 决定。</strong> Layer 0 的 13.755B 逻辑参数和约 6.913 GiB 参数驻留量，绝大部分来自 384 个 FP4 routed experts。</li>
+<li><strong>单 token 算术量主要来自 Expert FFN 与 Attention 投影。</strong> mHC 和入口 RMSNorm 占比较小，但负责四路残差组织和数值稳定。</li>
+<li><strong>本层 Attention 历史状态较小。</strong> Layer 0 只保留 128-token local KV，不包含 compressed/global KV；更早历史由后续带压缩分支的层处理。</li>
+</ol>
 <h2 id="资料来源与版本说明">7. 资料来源与版本说明</h2>
 <p>本文分析对象为 <strong>DeepSeek-V4.1-Flash</strong>，数学关系与维度依据以下上游资料：</p>
 <ul>
-<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/config.json">模型配置</a></li>
-<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/model.py">模型前向实现</a>：RMSNorm、Attention、Gate、Expert、MoE、Block。</li>
-<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/main/inference/kernel.py">算子数学细节</a>：hc_split_sinkhorn、sparse_attn。</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">模型配置</a></li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py">模型前向实现</a>：RMSNorm、Attention、Gate、Expert、MoE、Block 与 Transformer。</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py">算子数学细节</a>：hc_split_sinkhorn、窗口索引与 sparse_attn。</li>
 </ul>
-<p>全文资料初次核查日期为 2026-10-05；SWA 与 RMSNorm 增补分别于 2026-10-09、2026-10-10 对照当时上游 <code>main</code> 页面所示 revision <code>517ef62</code> 复核。MoE 增补于 2026-10-13 对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 的配置、<code>Gate</code>、<code>Expert</code>、<code>MoE</code>、量化存储与 FP4 GEMM 复核。全文其他部分尚未统一锁定固定 revision；上游后续更新可能与本文分析时的内容不同。图示用于辅助理解，精确维度、dtype 与是否物化以相邻正文为准。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-13<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<p>全文已于 2026-10-14 统一对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 复核；同日 Hugging Face 模型 API 返回的 <code>main</code> SHA 也为该 revision。后续上游更新不会自动改变本文的分析基准。图示用于辅助理解，精确维度、dtype、存储方式与是否物化以相邻正文为准。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-14<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/02-layer0.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
