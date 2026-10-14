@@ -1,7 +1,7 @@
 ---
 title: DeepSeek-V4.1-Flash 图解系列
 status: published
-updated: 2026-10-13
+updated: 2026-10-14
 ---
 
 # DeepSeek-V4.1-Flash 图解系列
@@ -25,9 +25,7 @@ updated: 2026-10-13
 
 ## 版本与资料依据
 
-官方资料入口：[deepseek-ai/DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)。既有正文依据此前对官方配置与参考前向的核查整理；各次增补的核查日期和版本边界见正文末尾。
-
-MoE 章节已于 2026-10-13 对照固定 revision [`5254448103b6254fc646dacbca1cbbf20e9216c1`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1) 复核。文章其他章节并未因此自动锁定到同一 revision；各图的标注勘误和限定仍以相邻正文及 `figures.json` 为准。
+官方资料入口：[deepseek-ai/DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)。Layer 0 全文已于 2026-10-14 统一对照固定 revision [`5254448103b6254fc646dacbca1cbbf20e9216c1`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1) 复核；各图的标注勘误和限定仍以相邻正文及 `figures.json` 为准。
 
 ## 共用符号
 

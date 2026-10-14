@@ -1,7 +1,7 @@
 ---
 title: 图解技术笔记
 status: published
-updated: 2026-10-10
+updated: 2026-10-14
 ---
 
 # 图解技术笔记
@@ -14,7 +14,7 @@ updated: 2026-10-10
 
 [阅读 Layer 0：四路残差、局部注意力与 MoE](models/deepseek-v4.1-flash/02-layer0.md)
 
-当前篇章含十二张手绘配图：整层结构、mHC 三步计算、RMSNorm、SWA 的窗口 KV / sink softmax / 两级输出投影，以及 MoE 的 Router / 专家参数索引 / 专家计算。复杂图可以点开放大，公式和 shape 同时保留为文本。
+当前篇章含十二张手绘配图：整层结构、mHC 三步计算、RMSNorm、SWA 的窗口 KV / sink softmax / 两级输出投影，以及 MoE 的 Router / 专家参数索引 / 专家计算。正文已补齐 Layer 0 整层参数、计算、显存和状态汇总；复杂图可以点开放大，公式和 shape 同时保留为文本。
 
 [系列目录、六篇阅读规划与资料说明](models/deepseek-v4.1-flash/index.md)
 

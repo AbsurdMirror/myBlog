@@ -1,9 +1,9 @@
 {
-  "checked_at": "2026-10-13",
+  "checked_at": "2026-10-14",
   "model": "deepseek-ai/DeepSeek-V4.1-Flash",
-  "revision_candidate": "5254448103b6254fc646dacbca1cbbf20e9216c1",
+  "pinned_revision": "5254448103b6254fc646dacbca1cbbf20e9216c1",
   "revision_content_verified": true,
-  "verification_scope": "MoE config, Gate, Expert, MoE, Linear storage, and fp4_gemm verified against the pinned revision; earlier article sections retain their own audit dates",
+  "verification_scope": "Full Layer 0 article verified against the pinned revision: config, RMSNorm, Hyper-Connections, local attention and sparse_attn kernel, Gate, Expert, MoE, quantized Linear storage, Transformer initialization, runtime buffers, and whole-layer arithmetic",
   "sources": [
     {
       "path": "inference/config.json",
