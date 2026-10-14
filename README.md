@@ -19,6 +19,6 @@ python scripts/check_site.py
 
 main 更新后，发布 workflow 构建和校验站点，将结果提交到 gh-pages，并显式请求 Pages 构建。旧文章资源保留在 archive/hexo-site，发布分支历史和旧站备份均保留。
 
-site/ 是生成物，不提交到 main。十二张采用版配图由清单记录 SHA256；MoE 专家计算图的已核实勘误也记录在清单与正文。模型事实的来源限定和已知标注歧义见正文及 progress/sources.json。
+site/ 是生成物，不提交到 main。十二张采用版配图由清单记录 SHA256；MoE 专家计算图的已核实勘误也记录在清单与正文。Layer 0 全文的固定 revision、来源范围和已知标注限定见正文及 progress/sources.json。
 
 progress/handoff.md 与 remote-observed.json 是接手时的历史记录；当前上线状态以 online-verification.json 为准。
