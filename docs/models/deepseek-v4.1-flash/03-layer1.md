@@ -58,195 +58,272 @@ $$
 
 ## 2. Engram
 
-### 2.1 位置、作用与输入输出
-
-Engram 把条件记忆作为 MoE 条件计算之外的另一条稀疏轴：MoE 根据隐藏状态选择少量专家进行动态计算；Engram 则根据确定性的局部 $N$-gram 地址，从巨大表中只读取少量行。官方论文把这一过程概括为 Tokenizer Compression、Multi-Head Hashing、Context-aware Gating 和 Multi-branch Integration。[Engram 论文](https://arxiv.org/abs/2601.07372)
-
-DeepSeek-V4.1-Flash 在零起始编号的 Layer 1 和 Layer 14 各放置一个 Engram。两者合计约 196B 逻辑参数；每个模块使用 $N$-gram 阶数 $\{2,3,4\}$、8 个 Hash head，每个阶数共 $8\times256=2048$ 维查表结果。Layer 1 的表有 384,006,168 行，每行 256 维。[技术报告 §2.4.2](https://arxiv.org/abs/2609.19969)
-
-参考前向并不是进入 Layer 1 后才开始构造 Hash。`Transformer.forward` 会在进入层循环前，根据原始 `input_ids` 一次生成两个 Engram 层的 Hash：
-
-$$
-I_{\mathrm{all}}:[B,S,2,24]\quad\text{(INT64)}.
-$$
-
-这里维度 2 对应 Layer 1 与 Layer 14，$24=3\times8$ 对应三个 $N$-gram 阶数和八个 Hash head。执行到 Layer 1 时，只取
-
-$$
-I^{(1)}=I_{\mathrm{all}}[:,:,0,:]:[B,S,24].
-$$
-
-因此需要把两个位置分清：
-
-- **Transformer 级 Hash 前置组件**：处理 Token 压缩、历史状态、两个 Engram 层的 Hash 与索引。
-- **Layer 1 Engram 模块**：读取本层的 24 个索引，执行查表、投影、门控和残差写回。
-
-这也解释了为什么后面的显存分析不能把完整 Hash buffer 在 Layer 1 和 Layer 14 各算一遍。[前向接入位置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1245-L1271)
-
-### 2.2 Token 压缩与跨前向历史
-
-原始 Token ID 为
-
-$$
-T:[B,S],\qquad 0\le T_{b,t}<129280.
-$$
-
-Hash 前先通过固定映射 $P$ 把 129,280 个原始 Token ID 映射到 99,092 个压缩 ID：
-
-$$
-T'_{b,t}=P[T_{b,t}].
-$$
-
-这张映射在模型构建时由 tokenizer 生成，会对可完整解码的 token 文本执行 Unicode 规范化、去音调、转小写、空白折叠和首尾空白处理；规范化结果相同的 token 共用压缩 ID。它是固定运行时 buffer，不是可学习参数。
-
-Hash 组件还维护
-
-$$
-T_{\mathrm{cache}}:[B_{\max},S_{\max}]\quad\text{(INT64)},
-$$
-
-所以 Decode 阶段可以读取 Prefill 或更早 Decode 已写入的最近三个压缩 Token ID，而不必重新处理全部历史。对于图像 span，压缩缓存写入特殊的 `DEAD=-1`；任何跨过 `DEAD` 的 $N$-gram 都会被阻断并使用固定 `pad_id` 补齐。
-
-令 $u_{b,t,r}$ 表示位置 $t$ 向前回看 $r$ 步后的有效压缩 ID，$r=0$ 是当前 token：
-
-$$
-u_{b,t,r}=
-\begin{cases}
-T'_{b,t-r}, & t-r\ge0\ \land\ [t-r,t]\text{ 内没有无效 token},\\
-t_{\mathrm{pad}}, & \text{其他}.
-\end{cases}
-$$
-
-### 2.3 乘法-XOR Hash 与互不重叠的分区
-
-对 Engram 层 $\ell$，四个回看位置各有一个由层号确定的奇数乘数 $\mu_{\ell,r}$。2、3、4-gram 的滚动 Hash 为：
-
-$$
-h^{(\ell)}_{b,t,n}
-=\bigoplus_{r=0}^{n-1}
-\left(u_{b,t,r}\mu_{\ell,r}\right),
-\qquad n\in\{2,3,4\}.
-$$
-
-每个阶数再进入八个不同的质数桶。记 $M_{\ell,n,q}$ 为模数、$O_{\ell,n,q}$ 为这段桶区间的起始 offset：
-
-$$
-i^{(\ell)}_{b,t,n,q}
-=O_{\ell,n,q}+
-\left(h^{(\ell)}_{b,t,n}\bmod M_{\ell,n,q}\right),
-\qquad q=0,\ldots,7.
-$$
-
-三个阶数乘八个 head，得到每 token 24 个地址。每个 $(n,q)$ 使用不同质数大小和互不重叠的 offset，因此可以把它们理解为 24 张逻辑表；在参数存储上，它们拼成一张连续大表。
+### 2.1 从 Token 到 24 个查表结果
 
 ![图 1：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表](assets/13_layer1_engram_lookup.png)
 
-图中 $G_0$ 表示当前 token，$G_1,G_2,G_3$ 依次向历史回看；`mask/pad/shift` 还读取未单独画出的有效性 mask。正文公式是精确定义，图中的蓝色 `$B\times S$` 块用于简写逐 token 的逻辑 shape。
+图 1 从左到右依次经过 Token 压缩、历史补齐、$N$-gram Hash、分区寻址和参数表查找。图中的蓝色块表示随 batch 和序列变化的张量，黄色块表示固定 buffer 或模型参数，绿色块表示计算步骤。
 
-Layer 1 的可学习表为：
+主要对象如下：
+
+| 对象 | Shape | 含义 |
+|---|---|---|
+| $T$ | $[B,S]$ | 原始 Token ID |
+| $T_{\mathrm{map}}$ | $[129280]$ | 原始词表到压缩词表的固定映射 |
+| $G_0,G_1,G_2,G_3$ | 各为 $[B,S]$ | 当前 token 与最近三个历史 token |
+| $H_{\mathrm{off}},H_{\mathrm{mod}}$ | 各为 $[3,8]$ | 三种 $N$-gram、八个 Hash head 的 offset 与模数 |
+| $I_E$ | $[B,S,24]$ | 每个 token 的 24 个查表地址 |
+| $E_{\mathrm{table}}$ | $[384006168,256]$ | Layer 1 的 Engram 参数表 |
+| $E_{\mathrm{flat}}$ | $[B,S,6144]$ | 24 行查表结果展平后的输出 |
+
+计算分为五步。
+
+#### Token 压缩
+
+原始 Token ID 的取值范围来自大小为 129,280 的词表。Hash 之前先通过固定映射 $T_{\mathrm{map}}$ 得到压缩 ID：
+
+$$
+T_{c,b,t}=T_{\mathrm{map}}\!\left[T_{b,t}\right],
+\qquad
+T_c:[B,S].
+$$
+
+固定配置把原始 Token 映射到 99,092 个压缩 ID。映射构建时会对能够完整解码的 token 文本执行 Unicode 规范化、去音调、转小写、空白折叠和首尾空白处理；规范化结果相同的 token 共用压缩 ID。$T_{\mathrm{map}}$ 是固定运行时 buffer，不是可学习参数。
+
+#### 组织当前 token 与历史 token
+
+图中的 $G_0$ 表示当前位置的压缩 Token ID，$G_1,G_2,G_3$ 依次向历史回看一步、两步和三步。Prefill 与 Decode 可能分属不同次前向，因此实现还维护压缩 Token 历史 cache，使当前前向能够读取此前已经写入的历史。
+
+记 $G_{b,t,r}$ 为位置 $t$ 向前回看 $r$ 步得到的输入，$r=0,1,2,3$：
+
+$$
+G_{b,t,r}=
+\begin{cases}
+T_{c,b,t-r},&
+t-r\ge 0\ \land\ [t-r,t]\text{ 内全部有效},\\
+t_{\mathrm{pad}},&
+\text{其他}.
+\end{cases}
+$$
+
+序列开头缺少的历史使用固定 $t_{\mathrm{pad}}$。多模态输入中的图像 span 会在压缩缓存中写入无效标记；任何跨过无效位置的 $N$-gram 都会被阻断并改用 $t_{\mathrm{pad}}$，避免把文本与图像位置拼成错误的局部短语。
+
+#### 构造 2、3、4-gram Hash
+
+Layer 1 为四个回看位置准备四个固定奇数乘数 $\mu_0,\mu_1,\mu_2,\mu_3$。先逐位置相乘，再通过 XOR 累积，分别得到 2、3、4-gram Hash：
+
+$$
+H_{b,t,n}
+=
+\bigoplus_{r=0}^{n-1}
+\left(G_{b,t,r}\mu_r\right),
+\qquad n\in\{2,3,4\}.
+$$
+
+对应关系是：
+
+$$
+\begin{aligned}
+H_{b,t,2}
+&=(G_{b,t,0}\mu_0)\oplus(G_{b,t,1}\mu_1),\\
+H_{b,t,3}
+&=H_{b,t,2}\oplus(G_{b,t,2}\mu_2),\\
+H_{b,t,4}
+&=H_{b,t,3}\oplus(G_{b,t,3}\mu_3).
+\end{aligned}
+$$
+
+因此，同一个当前 token 会同时保留二元、三元和四元局部上下文，而不是只使用最长的 4-gram。
+
+#### 生成 24 个查表地址
+
+每种 $N$-gram 都进入八个 Hash head。对阶数 $n\in\{2,3,4\}$ 和 head $q\in\{0,\ldots,7\}$，地址为：
+
+$$
+I_{E,b,t,n,q}
+=
+H_{\mathrm{off},n,q}
++
+\left(
+H_{b,t,n}\bmod H_{\mathrm{mod},n,q}
+\right).
+$$
+
+$H_{\mathrm{mod},n,q}$ 是该分区使用的质数模数，$H_{\mathrm{off},n,q}$ 是它在大表中的起始位置。不同 $(n,q)$ 使用互不重叠的地址区间，因此逻辑上可以理解为 24 张小表，参数存储上则拼接为一张连续大表。
+
+把三种阶数与八个 head 展平：
+
+$$
+I_E:[B,S,3,8]\rightarrow[B,S,24].
+$$
+
+#### 查表并展平
+
+Layer 1 的 Engram 参数表为：
 
 $$
 E_{\mathrm{table}}:[384006168,256].
 $$
 
-按 24 个地址读取：
+每个地址读取一行 256 维向量：
 
 $$
 E_{b,t,n,q,:}
-=E_{\mathrm{table}}[i^{(1)}_{b,t,n,q},:],
-\qquad E:[B,S,3,8,256].
+=
+E_{\mathrm{table}}
+\left[
+I_{E,b,t,n,q},:
+\right],
 $$
 
-最后展平：
+因此查表结果为：
 
 $$
-E_{\mathrm{flat}}:[B,S,6144],
-\qquad6144=3\times8\times256.
+E:[B,S,3,8,256]
+\rightarrow
+[B,S,24,256].
 $$
 
-“每 token 读取 24 行”是逻辑查表口径。固定 reference 中 FP8 数据与对应 E8M0 scale 分别通过 `F.embedding` gather，因此它不能直接等同于底层访存指令数。[Hash 实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py#L129-L184)
+最后把 24 行沿特征维展平：
 
-### 2.4 一次投影生成四个 Key 和一个共享 Value
+$$
+\boxed{
+E_{\mathrm{flat}}:[B,S,6144]
+},
+\qquad
+6144=3\times8\times256.
+$$
+
+至此，图 1 的输出已经包含当前 token 对应的 24 份局部短语记忆。这里的“24 次查表”是逻辑行读取口径；固定 revision 的官方推理实现会分别读取 FP8 数据与对应 scale，不能直接把逻辑行数等同于底层访存指令数。
+
+在官方推理实现中，模型会在进入各层循环之前，同时生成 Layer 1 和 Layer 14 所需的 Hash 地址：
+
+$$
+I_{\mathrm{all}}:[B,S,2,24].
+$$
+
+执行 Layer 1 时只取第一个切片 $I_{\mathrm{all}}[:,:,0,:]$。图 1 为了说明 Layer 1 的算子数据流，只画出了这个 $[B,S,24]$ 切片。
+
+### 2.2 从查表结果到四路残差写回
 
 ![图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回](assets/14_layer1_engram_computation.png)
 
-Engram 接收查表结果和 Layer 0 输出的四路残差：
+图 2 接续图 1 的输出 $E_{\mathrm{flat}}$。查表结果先投影为四路 Key 和一份共享 Value，再与四路残差分别计算 Gate，最后把同一份 Value 按不同幅度写回四路。
 
-| 对象 | Shape | 性质 |
+主要输入和参数如下：
+
+| 对象 | Shape | 含义 |
 |---|---|---|
-| $E_{\mathrm{flat}}$ | `[B,S,6144]` | 24 行查表结果展平，BF16 |
-| $X$ | `[B,S,4,5120]` | 四路残差，BF16 |
-| $W_E$ | `[25600,6144]` | FP8 可学习投影，无 bias |
-| $W_Q,W_K$ | 各 `[4,5120]` | BF16 可学习逐维缩放 |
-| $T_{\mathrm{mask}}$ | `[B,S]` | 可选 BOOL；图像位置为 false |
+| $E_{\mathrm{flat}}$ | $[B,S,6144]$ | 图 1 得到的 24 行查表结果 |
+| $X$ | $[B,S,4,5120]$ | Layer 0 输出的四路残差 |
+| $W_E$ | $[25600,6144]$ | 生成 Key 和 Value 的投影权重，无 bias |
+| $W_Q,W_K$ | 各为 $[4,5120]$ | 四路 Gate 使用的逐维缩放参数 |
+| $T_{\mathrm{mask}}$ | $[B,S]$ | 可选的文本位置 mask；计算时广播到四路 |
 
-统一采用权重 `[输出,输入]` 约定：
+计算分为四步。
+
+官方推理实现将 Engram 表的 FP8 数据按 scale 还原为 BF16。进入 Gate 分支后，$X,K_E,V_E,W_Q,W_K$ 显式转换为 FP32 参与计算；最终输出 $Y$ 再转换回 $X$ 的 dtype，本配置中为 BF16。
+
+#### 生成四路 Key 和共享 Value
+
+查表结果与 $W_E$ 相乘：
 
 $$
 F=E_{\mathrm{flat}}W_E^{\mathsf T},
-\qquad F:[B,S,25600].
+\qquad
+F:[B,S,25600].
 $$
 
-再按 $20480+5120$ 切分：
+沿最后一维按 $20480+5120$ 切分：
 
 $$
-[K_E,V_E]=\operatorname{split}(F,[20480,5120]),
+[K_E,V_E]
+=\operatorname{split}(F,[20480,5120]),
 $$
 
 $$
 K_E:[B,S,4,5120],
-\qquad V_E:[B,S,5120].
+\qquad
+V_E:[B,S,5120].
 $$
 
-四路各有一个 Key，但 Value 只有一份。Engram 最终向四路写入相同的 $V_E$，差异来自四路各自的 gate。
+$K_E$ 包含四路不同的 Key，$V_E$ 只有一份共享 Value。Engram 不会为四路分别生成四份 Value；四路写入差异来自后面各自计算的 Gate。
 
-### 2.5 归一化匹配分数与 Signed Sqrt
+#### 计算四路 RMS 缩放因子
 
-先合并两套逐维缩放：
+两组可学习参数先逐元素相乘：
 
 $$
-W=W_Q\odot W_K:[4,5120].
+W=W_Q\odot W_K,
+\qquad
+W:[4,5120].
 $$
 
-对于残差流 $c\in\{0,1,2,3\}$，分别沿 5120 维计算 RMS 倒数：
+对四路残差 $X$ 和四路 Key $K_E$ 分别沿 5120 维计算 RMS 倒数。对残差流 $c\in\{0,1,2,3\}$：
 
 $$
 r^X_{b,t,c}
-=\left(\frac1{5120}\sum_{d=0}^{5119}X_{b,t,c,d}^2+\epsilon\right)^{-1/2},
+=
+\left(
+\frac{1}{5120}
+\sum_{d=0}^{5119}X_{b,t,c,d}^{2}
++\epsilon
+\right)^{-1/2},
 $$
 
 $$
 r^K_{b,t,c}
-=\left(\frac1{5120}\sum_{d=0}^{5119}K_{E,b,t,c,d}^2+\epsilon\right)^{-1/2},
-\qquad \epsilon=10^{-20}.
+=
+\left(
+\frac{1}{5120}
+\sum_{d=0}^{5119}K_{E,b,t,c,d}^{2}
++\epsilon
+\right)^{-1/2},
+\qquad
+\epsilon=10^{-20}.
 $$
 
-加权归一化点积为：
+$r^X$ 与 $r^K$ 的 Shape 都是 $[B,S,4]$。它们只是当前输入动态生成的缩放因子，没有额外的可学习 RMSNorm 权重。
+
+#### 由加权点积生成 Gate
+
+每一路分别计算归一化加权点积：
 
 $$
 D_{b,t,c}
-=\frac{r^X_{b,t,c}r^K_{b,t,c}}{\sqrt{5120}}
+=
+\frac{r^X_{b,t,c}r^K_{b,t,c}}{\sqrt{5120}}
 \sum_{d=0}^{5119}
-X_{b,t,c,d}W_{c,d}K_{E,b,t,c,d}.
+X_{b,t,c,d}
+W_{c,d}
+K_{E,b,t,c,d},
 $$
 
-固定实现不会直接把 $D$ 送入 Sigmoid，而是先执行带符号平方根。这里使用 `copysign` 而不是简单的 $\operatorname{sign}(D)\sqrt{\cdot}$，从而与源码在 $D=0$ 时复制正号的边界行为一致：
+$$
+D:[B,S,4].
+$$
+
+官方推理实现不会直接把 $D$ 输入 Sigmoid，而是先执行 Signed Sqrt：
 
 $$
 \widetilde D_{b,t,c}
-=\operatorname{copysign}\left(
-\sqrt{\max(|D_{b,t,c}|,10^{-6})},
+=
+\operatorname{copysign}
+\left(
+\sqrt{\max\left(|D_{b,t,c}|,10^{-6}\right)},
 D_{b,t,c}
 \right).
 $$
 
-于是
+这里使用 $\operatorname{copysign}$，因此 $D=0$ 时也按照源码复制正号，而不是把结果写成零。随后得到四路 Gate：
 
 $$
-g_{b,t,c}=\sigma(\widetilde D_{b,t,c}).
+g_{b,t,c}=\sigma\!\left(\widetilde D_{b,t,c}\right),
+\qquad
+g:[B,S,4].
 $$
 
-多模态输入中的图像位置随后把 gate 置零；纯文本前向不需要 mask：
+纯文本输入不需要额外处理。多模态输入中，图像位置的 Gate 在 Sigmoid 之后被 mask 置零：
 
 $$
 g_{b,t,c}\leftarrow
@@ -256,175 +333,193 @@ g_{b,t,c},&T_{\mathrm{mask},b,t}=1,\\
 \end{cases}
 $$
 
-图 2 把这两步合并画在 Sigmoid 附近；源码顺序是 **先 Sigmoid，再用 mask 置零**。
+图 2 为了压缩画面，把 $T_{\mathrm{mask}}$ 的箭头画在 Sigmoid 附近；源码执行顺序是先计算 Sigmoid，再应用 mask。
 
-### 2.6 四路写回，但不改变 `pre_next`
+#### 把共享 Value 写回四路残差
 
-最终输出为：
+同一个 $V_E$ 广播到四路，每一路使用自己的 Gate：
 
 $$
 \boxed{
-X'_{b,t,c,d}
-=X_{b,t,c,d}+g_{b,t,c}V_{E,b,t,d}
+Y_{b,t,c,d}
+=
+X_{b,t,c,d}
++g_{b,t,c}V_{E,b,t,d}
 },
-\qquad X':[B,S,4,5120].
 $$
 
-这一步有三个容易混淆的点：
+$$
+Y:[B,S,4,5120].
+$$
 
-1. $V_E$ 在四路之间共享，不是从表中读取四份不同 Value。
-2. 四路 gate 独立，因此同一个 $V_E$ 对四路的写入幅度不同。
-3. Engram 只返回更新后的四路残差 $X'$；Layer 0 传来的 $p^{(0)}_{\mathrm{next}}$ 不经过 Engram，也不会被它重新计算。[Engram 前向](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L296-L365)
+因此，Engram 写回具有三个特征：
 
-### 2.7 参数量与 GPU 驻留字节
+1. 四路共享同一份 $V_E$。
+2. 四路分别使用自己的 $g_{b,t,c}$，写入幅度可以不同。
+3. Engram 只更新四路残差；Layer 0 传来的动态 `pre_next` 原样保留，继续交给 Layer 1 的第一次 `hc_pre`。
 
-以下先把 Engram 作为一个完整算子核算，再在本文最后汇总 Layer 1 整层。逻辑参数量只统计可学习模型标量；FP8 scale 计入 GPU 驻留字节，但不重复算作逻辑模型参数。
+### 2.3 参数量、计算量与 Required Global Memory 理论下界
 
-#### 逻辑参数量
+本节只统计 Layer 1 的一个 Engram 算子。Layer 1 的 mHC、RMSNorm、局部 Attention 和 MoE 留到整层汇总，不在这里重复计算。数字后缀 B 表示 $10^9$；存储量使用 Byte、GB 和 GiB。
 
-| 参数 | Shape | 逻辑参数量 |
+#### 参数量
+
+只统计可学习模型标量。FP8 scale 属于量化存储元数据，计入后面的权重驻留字节，不重复算作逻辑模型参数。
+
+| 参数 | Shape | 参数量 |
 |---|---|---:|
-| $E_{\mathrm{table}}$ | `[384006168,256]` | 98,305,579,008 |
-| $W_E$ | `[25600,6144]` | 157,286,400 |
-| $W_Q$ | `[4,5120]` | 20,480 |
-| $W_K$ | `[4,5120]` | 20,480 |
-| **Engram 合计** | — | **98,462,906,368** |
+| $E_{\mathrm{table}}$ | $[384006168,256]$ | 98,305,579,008 |
+| $W_E$ | $[25600,6144]$ | 157,286,400 |
+| $W_Q$ | $[4,5120]$ | 20,480 |
+| $W_K$ | $[4,5120]$ | 20,480 |
+| **合计** | — | **98,462,906,368** |
 
 $$
 \boxed{
+\begin{aligned}
 P_{\mathrm{Engram1}}
-=384006168\times256
-+25600\times6144
-+2\times4\times5120
-=98462906368
+={}&384006168\times256\\
+&+25600\times6144\\
+&+2\times4\times5120\\
+={}&98462906368.
+\end{aligned}
 }
 $$
 
-技术报告中的“196B Engram”是 Layer 1 与 Layer 14 两个模块的模型级近似；这里给的是 Layer 1 单个 Engram 按固定配置得到的精确逻辑参数量。
+即 Layer 1 的单个 Engram 包含约 **98.463B** 个逻辑参数。技术报告中的约 196B 是 Layer 1 与 Layer 14 两个 Engram 的模型级合计近似。
 
-#### 参考 GPU 权重存储
+#### 计算量
 
-固定 reference 中：
+统计口径与 Layer 0 相同：标量加法、减法和乘法各计 1 次；XOR、整数取模、逻辑 Lookup、rsqrt、sqrt、exp、除法和比较单列。忽略量化与反量化、类型转换、通信、数据搬运和具体 kernel 融合。
 
-- Engram 表用 FP8 E4M3 数据，每 32 个元素配一个 E8M0 scale。
-- $W_E$ 用 FP8 E4M3 数据和 $32\times32$ block scale。
-- $W_Q,W_K$ 用 BF16。
+下表为 Layer 1 Engram 处理一个 token 的计算量。Hash 部分只归因 Layer 1 的一组地址。
 
-| 部分 | FP8 / BF16 数据与 scale | GPU 驻留字节 |
-|---|---|---:|
-| Engram 表 | $384006168\times(256+8)$ | 101,377,628,352 B |
-| $W_E$ | $25600\times6144+800\times192$ | 157,440,000 B |
-| $W_Q,W_K$ | $2\times4\times5120\times2$ | 81,920 B |
-| **Engram 合计** | — | **101,535,150,272 B** |
-
-$$
-\boxed{
-M_{\mathrm{Engram1,param}}
-=101535150272\ \mathrm{Byte}
-\approx101.535\ \mathrm{GB}
-\approx94.562\ \mathrm{GiB}
-}
-$$
-
-这不表示生产部署必须把整个表放在单张 GPU：官方报告说明确定性地址允许预取，参考实现也支持按行跨 `world_size` 分片，并在查表后合并结果。这里的数值是便于核算的 `world_size=1` 基准。
-
-### 2.8 前向计算量
-
-#### 统计口径
-
-沿用 Layer 0：统计数学前向的标量加、减、乘，每次计 1；`XOR`、整数取模、逻辑 Lookup、`rsqrt`、`sqrt`、`exp`、除法和比较单列。忽略量化/反量化、类型转换、通信、reshape、数据搬运和具体 kernel 融合。
-
-Hash 在官方 reference 中同时生成 Layer 1、14 的地址。为了与“本层增量”一致，主表只归因 Layer 1 的一个 Hash slice；完整 Hash 前置调用的整数操作量在表后单独说明。
-
-#### Engram 每 token 的算法级运算
-
-| 阶段 | Layer 1 每 token 的加 / 减 / 乘 | 其他运算 |
+| 阶段 | 加 / 减 / 乘 | 其他运算 |
 |---|---:|---|
 | 压缩 Token ID | 0 | 逻辑 Lookup：1 |
-| 四个回看位置乘 Hash 乘数 | 4 | XOR：3 |
-| 24 个桶取模并加 offset | 24 | 整数取模：24 |
-| 24 行 Engram 查表 | 0 | 逻辑行 Lookup：24 |
+| 当前及三个历史位置乘 Hash 乘数 | 4 | XOR：3 |
+| 24 个分区取模并加 offset | 24 | 整数取模：24 |
+| 读取 24 行 Engram 表 | 0 | 逻辑行 Lookup：24 |
 | $6144\rightarrow25600$ 投影 | 314,547,200 | — |
-| $X,K_E$ 的八个 RMS 因子 | 81,928 | `rsqrt`：8 |
+| $X,K_E$ 的八个 RMS 因子 | 81,928 | rsqrt：8 |
 | 四路加权点积与归一化缩放 | 61,448 | — |
-| Signed Sqrt 与 Sigmoid | 8 | `sqrt`：4；`exp`：4；除法：4；比较：4 |
+| Signed Sqrt 与 Sigmoid | 8 | sqrt：4；exp：4；除法：4；比较：4 |
 | 四路 $gV_E$ 写回 | 40,960 | — |
-| **合计** | **314,731,572** | 见上 |
+| **每 token 合计** | **314,731,572** | 见上 |
 
-其中最大项来自：
+其中最大项是 $6144\rightarrow25600$ 投影。每个输出元素执行 6144 次乘法和 6143 次加法：
 
 $$
-25600\times(6144\ \mathrm{mult}+6143\ \mathrm{add})
+25600\times(6144+6143)
 =314547200.
 $$
 
-此外，参考实现每次 Engram 调用都会计算一次：
+此外，官方推理实现每次调用 Engram 时还会计算一次：
 
 $$
 W=W_Q\odot W_K,
 $$
 
-产生 20,480 次逐元素乘法。若部署实现预先合并这两个只以乘积形式使用的静态权重，可省去这项。
-
-所以处理 $N=BS$ 个 token 时：
+产生 20,480 次与 token 数量无关的逐元素乘法。因此处理 $N=BS$ 个 token 时：
 
 $$
 \boxed{
 C_{\mathrm{Engram1,mul/add/sub}}
 =314731572N+20480
-}
+}.
 $$
 
-另有：
+同时还有：
 
 $$
-3N\ \mathrm{XOR},\quad24N\ \mathrm{整数取模},\quad25N\ \mathrm{逻辑Lookup},
+3N\ \mathrm{XOR},
+\qquad
+24N\ \mathrm{整数取模},
+\qquad
+25N\ \mathrm{逻辑Lookup},
 $$
 
 $$
-8N\ \mathrm{rsqrt},\quad4N\ \mathrm{sqrt},\quad4N\ \mathrm{exp},
-\quad4N\ \mathrm{除法},\quad4N\ \mathrm{clamp比较}.
+8N\ \mathrm{rsqrt},
+\quad
+4N\ \mathrm{sqrt},
+\quad
+4N\ \mathrm{exp},
+\quad
+4N\ \mathrm{除法},
+\quad
+4N\ \mathrm{比较}.
 $$
 
-这里把 Sigmoid 按 $1/(1+e^{-x})$ 展开计数；实际数值稳定 kernel 的指令数可能不同。Mask、边界检查、历史 gather 和布尔选择随输入情况变化，没有混入主公式。
+官方推理实现会在一次 Hash 计算中同时生成 Layer 1 和 Layer 14 的地址，所以完整调用实际包含每 token 8 次整数乘法、6 次 XOR、48 次取模和 48 次 offset 加法。上面的算子表只把其中一半 Hash 主体归因给 Layer 1；共享 Token 压缩和历史 cache 不能在 Layer 14 再重复统计。
 
-完整 `NgramHashState.forward` 一次会同时计算 Layer 1 和 Layer 14，所以参考调用的 Hash 主体为每 token **8 次整数乘法、6 次 XOR、48 次取模和 48 次 offset 加法**，但 Token 压缩映射仍只做一次。本文把其中一半 Hash 主体归因给 Layer 1；分析 Layer 14 时不能再次计入共享 Token 映射和缓存。
+#### Required Global Memory 理论下界（理想融合口径）
 
-### 2.9 Required Global Memory 理论下界（理想融合口径）
+与 Layer 0 相同，这里把 Engram 视为一个逻辑分析单元，并采用以下假设：
 
-与 Layer 0 的算子章节采用相同口径：Engram 内部的 $E_{\mathrm{flat}},F,K_E,V_E,D,g$ 假设可以融合、分块或复用工作区，不要求全部完整写回 Global Memory；这里只统计长期权重、算子边界输入与输出。
+- **Weight**：参数和量化 scale 长期保存在 Global Memory。
+- **I/O**：完整输入与输出保存在 Global Memory，并分别计数。
+- **Internal Activation**：$E_{\mathrm{flat}},F,K_E,V_E,D,g$ 等中间量允许通过融合、分块或工作区复用，不要求全部完整写回 Global Memory。
 
-Layer 1 Engram body 的逻辑边界包括四路 BF16 残差输入、24 个 INT64 索引和四路 BF16 残差输出：
+按 `world_size=1` 核算，固定 revision 的官方推理实现中权重存储为：
 
-| 类别 | Tensor | Global Memory Size |
+| 权重 | 数据与 scale | GPU 驻留字节 |
 |---|---|---:|
-| Parameter | Engram 表、$W_E,W_Q,W_K$ 及 FP8 scale | 101,535,150,272 B |
-| Input | $X:[B,S,4,5120]$ BF16 | $40960N$ B |
-| Input | $I^{(1)}:[B,S,24]$ INT64 | $192N$ B |
-| Output | $X':[B,S,4,5120]$ BF16 | $40960N$ B |
+| Engram 表 | $384006168\times(256+8)$ | 101,377,628,352 |
+| $W_E$ | $25600\times6144+800\times192$ | 157,440,000 |
+| $W_Q,W_K$ | $2\times4\times5120\times2$ | 81,920 |
+| **合计** | — | **101,535,150,272** |
 
-如果把 Layer 1 的索引切片视为独立逻辑输入，则：
+Engram 表使用 FP8 E4M3 数据，每 32 个元素配一个 E8M0 scale；$W_E$ 使用 FP8 E4M3 数据和 $32\times32$ block scale；$W_Q,W_K$ 使用 BF16。
+
+Engram 主体的逻辑边界为：
+
+| Tensor | 分类 | Shape / dtype | Logical Size |
+|---|---|---|---:|
+| $X$ | Input | $[B,S,4,5120]$ BF16 | $40960N$ B |
+| $I_E$ | Input | $[B,S,24]$ INT64 | $192N$ B |
+| $Y$ | Output | $[B,S,4,5120]$ BF16 | $40960N$ B |
+
+如果把 Layer 1 的 24 个地址视为独立输入，则：
 
 $$
 \boxed{
 M_{\mathrm{Engram1,body}}
-=101535150272+82112N\ \mathrm{Byte}
-}
+=101535150272+82112N
+\quad\mathrm{Byte}
+}.
 $$
 
-固定 reference 实际不会重新分配这份 $192N$ Byte 的切片：$I^{(1)}$ 是完整 `engram_hashes:[B,S,2,24]` 的视图。模型级 Hash 前置组件还持有 1,035,072 Byte 固定 buffer、$8B_{\max}S_{\max}$ Byte 压缩 Token 历史 cache，以及 $384N$ Byte 的两层完整 Hash 输出。因此按真实共享分配、又不重复计算视图时，Engram 系统的最低占用为：
+在官方推理实现中，$I_E$ 实际是完整 $I_{\mathrm{all}}:[B,S,2,24]$ 的视图，不会单独分配 $192N$ Byte。共享 Hash 前置组件还持有：
+
+| 对象 | Shape / dtype | 字节数 |
+|---|---|---:|
+| Token 压缩映射 | $[129280]$ INT64 | 1,034,240 |
+| 两层 Hash 乘数 | $[2,4]$ INT64 | 64 |
+| 两层质数模数 | $[2,3,8]$ INT64 | 384 |
+| 两层 offset | $[2,24]$ INT64 | 384 |
+| 压缩 Token 历史 cache | $[B_{\max},S_{\max}]$ INT64 | $8B_{\max}S_{\max}$ |
+| 完整 Hash 输出 | $[B,S,2,24]$ INT64 | $384N$ |
+
+前四项固定 buffer 合计 1,035,072 Byte。按实际共享分配、不重复计算 Layer 1 地址视图时：
 
 $$
 \boxed{
+\begin{aligned}
 M_{\mathrm{Engram1+shared\ hash,min}}
-=101536185344
-+82304N
-+8B_{\max}S_{\max}
-\quad\mathrm{Byte}
+={}&101536185344\\
+&+82304N\\
+&+8B_{\max}S_{\max}
+\quad\mathrm{Byte}.
+\end{aligned}
 }
 $$
 
-多模态路径若把 `engram_mask:[B,S]` 独立计入，再加 $N$ Byte。这里没有加入本层局部 Attention 的 KV cache、RoPE 表和跨层 `pre_next`；它们属于 Layer 1 整层状态，将在第 5 节统一汇总。上式也不是进程峰值显存或显存读写量。
+多模态路径若把新生成的 BOOL `engram_mask:[B,S]` 独立计入，再加 $N$ Byte。原始 Token ID $T$ 是模型级共享输入；若把 Engram 当作完全独立的端到端算子并把 $T$ 也计入边界，再加 $8N$ Byte。
+
+这些公式是 Required Global Memory 的理论下界，不是进程峰值显存，也不是显存读写量。FP8 解量化临时值、GEMM workspace、分片通信 buffer、allocator 保留区和 host-memory offload 都会改变实际测量结果。
+
+形状、数据类型与执行顺序依据固定 revision 的[模型配置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json)、[Hash 实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py)和[模型前向实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py)。
 
 ## 3. Layer 1 第一次 `hc_pre` 的真正变化
 
@@ -512,7 +607,7 @@ M_{\mathrm{Layer1,param}}
 }
 $$
 
-Engram 占 Layer 1 逻辑参数的约 **87.74%**，占参考权重驻留字节的约 **93.19%**。这不表示生产部署必须把 101.5 GB Engram 全放在单张 GPU：官方报告明确采用确定性地址进行预取，参考实现也支持按行跨 `world_size` 分片，并在查表后合并结果。本节的单卡完整驻留值是便于核算的 `world_size=1` 基准，不是部署建议。
+Engram 占 Layer 1 逻辑参数的约 **87.74%**，占本文核算权重驻留字节的约 **93.19%**。这不表示生产部署必须把 101.5 GB Engram 全放在单张 GPU：官方报告明确采用确定性地址进行预取，官方推理实现也支持按行跨 `world_size` 分片，并在查表后合并结果。本节的单卡完整驻留值是便于核算的 `world_size=1` 基准，不是部署建议。
 
 ### 5.2 整层前向计算量
 
@@ -534,11 +629,11 @@ C_{\mathrm{Layer1,mul/add/sub}}
 }
 $$
 
-在暂不考虑 $\overline L$ 的固定部分时，Engram 使本层每 token 的加/减/乘主项比 Layer 0 reference 增加约 **41.68%**。这个比例不是实际延迟比例：Engram 表可预取和分片，FP8 GEMM、访存、通信、并发重叠与 kernel 融合都会改变硬件时间。[官方报告的 Engram 预取说明](https://arxiv.org/abs/2609.19969)
+在暂不考虑 $\overline L$ 的固定部分时，Engram 使本层每 token 的加/减/乘主项比 Layer 0 官方通用路径增加约 **41.68%**。这个比例不是实际延迟比例：Engram 表可预取和分片，FP8 GEMM、访存、通信、并发重叠与 kernel 融合都会改变硬件时间。[官方报告的 Engram 预取说明](https://arxiv.org/abs/2609.19969)
 
 ### 5.3 整层 Required Global Memory 理论下界与状态
 
-这一节给出固定 reference 的**共享状态视角**：参数和 scale、层边界 I/O、本层 local Attention 状态、模型级 Hash 固定 buffer、Token 历史 cache，以及同时服务 Layer 1 和 Layer 14 的完整 `engram_hashes`。内部 $E_{\mathrm{flat}},F,K_E,V_E,D,g$ 假设可通过融合、分块或工作区复用，不要求全部同时写入 Global Memory。
+这一节给出固定 revision 官方推理实现的**共享状态视角**：参数和 scale、层边界 I/O、本层 local Attention 状态、模型级 Hash 固定 buffer、Token 历史 cache，以及同时服务 Layer 1 和 Layer 14 的完整 `engram_hashes`。内部 $E_{\mathrm{flat}},F,K_E,V_E,D,g$ 假设可通过融合、分块或工作区复用，不要求全部同时写入 Global Memory。
 
 #### 边界 I/O 与持久状态
 
@@ -628,7 +723,7 @@ Layer 1 最终输出：
 
 1. **Layer 1 是 Layer 0 基准 Block 的第一次结构扩展。** 新增 Engram，但 Attention 仍是纯 128-token SWA，MoE 与 mHC 主体不变。
 2. **Engram 向四路写入共享 Value、独立 Gate。** 它更新四路残差，却不改动 Layer 0 传来的动态 `pre_next`。
-3. **本层容量主要由条件记忆决定。** 单个 Engram 带来 98.463B 逻辑参数和约 94.562 GiB 的 `world_size=1` 参考权重驻留；实际部署依赖行分片、预取或 host-memory offload，而不是把它理解成必须单卡常驻的普通线性层。
+3. **本层容量主要由条件记忆决定。** 单个 Engram 带来 98.463B 逻辑参数和约 94.562 GiB 的 `world_size=1` 权重驻留；实际部署依赖行分片、预取或 host-memory offload，而不是把它理解成必须单卡常驻的普通线性层。
 
 ## 6. 资料来源与版本说明
 
@@ -638,4 +733,4 @@ Layer 1 最终输出：
 - [固定 revision 的 Hash 实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py)：Token 压缩、历史 cache、Hash 乘数、质数桶与 offset。
 - [固定 revision 的模型前向](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py)：Engram 表、KV 投影、Gate、Block 与跨层 `pre_mix`。
 
-全文于 2026-10-20 对照固定 revision [`5254448103b6254fc646dacbca1cbbf20e9216c1`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1) 重新核算。参数量、计算量和 Required Global Memory 使用本文声明的逻辑口径；官方报告中的模型级近似、参考实现的张量分配和具体部署引擎的测量值不混为同一数字。
+全文于 2026-10-20 对照固定 revision [`5254448103b6254fc646dacbca1cbbf20e9216c1`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1) 重新核算。参数量、计算量和 Required Global Memory 使用本文声明的逻辑口径；官方报告中的模型级近似、官方推理实现的张量分配和具体部署引擎的测量值不混为同一数字。
