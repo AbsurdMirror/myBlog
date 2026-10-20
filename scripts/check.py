@@ -76,6 +76,8 @@ def main():
     layer1_parameter_bytes=layer_parameter_bytes+engram_parameter_bytes
     layer1_reference_ops=layer_reference_ops+engram_ops_per_token
     engram_hash_shared_fixed=129280*8+2*4*8+2*3*8*8+2*24*8
+    engram_body_boundary_bytes_per_token=2*4*5120*2+24*8
+    engram_shared_boundary_bytes_per_token=2*4*5120*2+2*24*8
     assert (rmsnorm,2*rmsnorm_params,rmsnorm_param_bytes)==(20481,10240,10240)
     assert (mhc,swa,moe)==(491547,126617408,13626901248)
     assert (moe_routed_expert,moe_shared_expert,moe_scalar_ops)==(70780672,70778368,499425676)
@@ -90,6 +92,9 @@ def main():
     assert (layer1_params,layer1_parameter_bytes)==(112217418358,108958172824)
     assert layer1_reference_ops==1069870478
     assert engram_hash_shared_fixed==1035072
+    assert engram_body_boundary_bytes_per_token==82112
+    assert engram_shared_boundary_bytes_per_token==82304
+    assert engram_parameter_bytes+engram_hash_shared_fixed==101536185344
     if errors: raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(pages)} pages, relative resources, original hashes, arithmetic ({mode}).')
 
