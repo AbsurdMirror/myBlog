@@ -15,12 +15,16 @@ def render(text: str) -> str:
     try:
         result = subprocess.run(
             ['pandoc', '--from=markdown+tex_math_dollars-implicit_figures',
-             '--to=html5', '--mathml', '--syntax-highlighting=none', '--wrap=none'],
+             '--to=html5', '--mathml', '--no-highlight', '--wrap=none'],
             input=text, text=True, encoding='utf-8', capture_output=True, check=True, timeout=60)
     except FileNotFoundError as exc:
         raise RuntimeError('Pandoc is required. Install Pandoc before rendering.') from exc
-    if result.stderr.strip():
-        raise RuntimeError('Pandoc reported a rendering problem: ' + result.stderr)
+    diagnostics = '\n'.join(
+        line for line in result.stderr.splitlines()
+        if 'Deprecated: --no-highlight' not in line
+    ).strip()
+    if diagnostics:
+        raise RuntimeError('Pandoc reported a rendering problem: ' + diagnostics)
     def convert_link(match: re.Match) -> str:
         href = match.group(1)
         if not re.match(r'\w+://', href):
