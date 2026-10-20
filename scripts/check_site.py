@@ -36,14 +36,22 @@ def main():
             if not dest.is_relative_to(site) or not dest.exists():errors.append(f'{path.name}: missing {link}');continue
             if u.fragment and dest in parsed and unquote(u.fragment) not in parsed[dest].ids:
                 errors.append(f'{path.name}: missing anchor {link}')
-    layer=site/'models/deepseek-v4.1-flash/02-layer0.html'
     fig_manifest=ROOT/'docs/models/deepseek-v4.1-flash/assets/figures.json'
     figures=json.loads(fig_manifest.read_text(encoding='utf-8'))['figures']
-    if layer.exists():
-        p=parsed[layer.resolve()]
-        if len(p.images)!=len(figures):errors.append(f'Layer 0 must include {len(figures)} original diagrams')
-        if p.math<60:errors.append('Missing MathML formulas')
-        for f in figures:
+    figure_pages=[
+        (site/'models/deepseek-v4.1-flash/02-layer0.html','layer0-',60,'Layer 0'),
+        (site/'models/deepseek-v4.1-flash/03-layer1.html','layer1-',30,'Layer 1'),
+    ]
+    for layer,prefix,min_math,label in figure_pages:
+        if not layer.exists():
+            continue
+        page=parsed[layer.resolve()]
+        expected=[f for f in figures if f['id'].startswith(prefix)]
+        if len(page.images)!=len(expected):
+            errors.append(f'{label} must include {len(expected)} original diagrams')
+        if page.math<min_math:
+            errors.append(f'{label} is missing MathML formulas')
+        for f in expected:
             path=layer.parent/'assets'/f['file']
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=f['sha256']:
                 errors.append('Missing/changed deployed image '+f['file'])

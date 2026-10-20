@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "figures": [
     {
       "id": "layer0-01",
@@ -151,6 +151,34 @@
       "semantic_review": "reviewed",
       "notes": [
         "原始交付图两处Gate上限误写为min(G,0)；采用版依据官方clamp(gate,max=10)修正为min(G,10)，其余结构保持原风格。"
+      ]
+    },
+    {
+      "id": "layer1-01",
+      "file": "13_layer1_engram_lookup.png",
+      "sha256": "ae4b934b8130bce4bd7eec31aa5916f22b16f1c84b53b492ca15d566ab152b17",
+      "bytes": 1363071,
+      "width": 1672,
+      "height": 941,
+      "selection": "user-supplied",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "G0表示当前token，G1至G3依次回看历史；mask/pad/shift还读取图中未单独画出的token有效性mask。",
+        "图中24张逻辑表在参数存储上是同一张大表的24个互不重叠区间。"
+      ]
+    },
+    {
+      "id": "layer1-02",
+      "file": "14_layer1_engram_computation.png",
+      "sha256": "08d4de8a051b52535654031876b9defa636481541d6478061519f5f7d68f50be",
+      "bytes": 1244510,
+      "width": 1672,
+      "height": 941,
+      "selection": "user-supplied",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "源码顺序为先Sigmoid再用token mask把图像位置的gate置零；图中在Sigmoid附近合并表达。",
+        "四路共享同一个Value，但每路Key与gate独立。"
       ]
     }
   ]
