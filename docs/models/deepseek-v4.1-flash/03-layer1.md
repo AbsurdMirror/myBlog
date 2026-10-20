@@ -56,7 +56,9 @@ $$
 
 固定配置中 `compress_ratios[1]=0`，而 `kv_source_layers` 与 `index_source_layers` 都从 Layer 2 开始。因此 Layer 1 与 Layer 0 一样只执行 SWA；本页新增的注意力外路径只有 Engram。[配置核查](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json)
 
-## 2. Engram 在哪里，解决什么问题
+## 2. Engram
+
+### 2.1 位置、作用与输入输出
 
 Engram 把条件记忆作为 MoE 条件计算之外的另一条稀疏轴：MoE 根据隐藏状态选择少量专家进行动态计算；Engram 则根据确定性的局部 $N$-gram 地址，从巨大表中只读取少量行。官方论文把这一过程概括为 Tokenizer Compression、Multi-Head Hashing、Context-aware Gating 和 Multi-branch Integration。[Engram 论文](https://arxiv.org/abs/2601.07372)
 
@@ -81,9 +83,7 @@ $$
 
 这也解释了为什么后面的显存分析不能把完整 Hash buffer 在 Layer 1 和 Layer 14 各算一遍。[前向接入位置](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1245-L1271)
 
-## 3. 从 Token 到 24 个查表地址
-
-### 3.1 Token 压缩与跨前向历史
+### 2.2 Token 压缩与跨前向历史
 
 原始 Token ID 为
 
@@ -117,7 +117,7 @@ t_{\mathrm{pad}}, & \text{其他}.
 \end{cases}
 $$
 
-### 3.2 乘法-XOR Hash 与互不重叠的分区
+### 2.3 乘法-XOR Hash 与互不重叠的分区
 
 对 Engram 层 $\ell$，四个回看位置各有一个由层号确定的奇数乘数 $\mu_{\ell,r}$。2、3、4-gram 的滚动 Hash 为：
 
@@ -166,9 +166,7 @@ $$
 
 “每 token 读取 24 行”是逻辑查表口径。固定 reference 中 FP8 数据与对应 E8M0 scale 分别通过 `F.embedding` gather，因此它不能直接等同于底层访存指令数。[Hash 实现](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py#L129-L184)
 
-## 4. 从查表结果到四路残差写回
-
-### 4.1 一次投影生成四个 Key 和一个共享 Value
+### 2.4 一次投影生成四个 Key 和一个共享 Value
 
 ![图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回](assets/14_layer1_engram_computation.png)
 
@@ -202,7 +200,7 @@ $$
 
 四路各有一个 Key，但 Value 只有一份。Engram 最终向四路写入相同的 $V_E$，差异来自四路各自的 gate。
 
-### 4.2 归一化匹配分数与 Signed Sqrt
+### 2.5 归一化匹配分数与 Signed Sqrt
 
 先合并两套逐维缩放：
 
@@ -260,7 +258,7 @@ $$
 
 图 2 把这两步合并画在 Sigmoid 附近；源码顺序是 **先 Sigmoid，再用 mask 置零**。
 
-### 4.3 四路写回，但不改变 `pre_next`
+### 2.6 四路写回，但不改变 `pre_next`
 
 最终输出为：
 
@@ -278,70 +276,11 @@ $$
 2. 四路 gate 独立，因此同一个 $V_E$ 对四路的写入幅度不同。
 3. Engram 只返回更新后的四路残差 $X'$；Layer 0 传来的 $p^{(0)}_{\mathrm{next}}$ 不经过 Engram，也不会被它重新计算。[Engram 前向](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L296-L365)
 
-## 5. Layer 1 第一次 `hc_pre` 的真正变化
+### 2.7 参数量与 GPU 驻留字节
 
-模型只在最初把 embedding 扩成四路时创建一次 identity-pre：
+以下先把 Engram 作为一个完整算子核算，再在本文最后汇总 Layer 1 整层。逻辑参数量只统计可学习模型标量；FP8 scale 计入 GPU 驻留字节，但不重复算作逻辑模型参数。
 
-$$
-p^{\mathrm{identity}}=[1,0,0,0].
-$$
-
-Layer 0 的 Attention 入口使用它；Layer 0 执行结束后返回 MoE 侧生成的 `ffn_pre`，即 $p^{(0)}_{\mathrm{next}}$。Layer 1 不会重新创建 identity-pre，而是直接用这个动态状态汇聚 Engram 更新后的四路残差：
-
-$$
-\boxed{
-Z^{(1)}_{b,t,d}
-=\sum_{c=0}^{3}
-p^{(0)}_{\mathrm{next},b,t,c}
-X'_{b,t,c,d}
-},
-\qquad Z^{(1)}:[B,S,5120].
-$$
-
-与此同时，Layer 1 Attention 侧的 `hc_mixes` 已经从 $X'$ 预测出新的 `attn_pre/post/comb`。但这里的第一次 `hc_pre` 仍使用**上一层**传来的 $p^{(0)}_{\mathrm{next}}$；本层新生成的 `attn_pre` 留给紧随其后的 MoE 入口。顺序是：
-
-$$
-\underbrace{p^{(0)}_{\mathrm{next}}}_{\text{Layer 0 MoE 产生}}
-\xrightarrow{\mathrm{Layer\ 1\ Attention\ hc\_pre}}
-\underbrace{p^{(1)}_{A}}_{\text{Layer 1 Attention 产生}}
-\xrightarrow{\mathrm{Layer\ 1\ MoE\ hc\_pre}}
-\underbrace{p^{(1)}_{\mathrm{next}}}_{\text{Layer 1 MoE 产生}}.
-$$
-
-这正是 Single-Pass mHC 的跨子层、跨层系数传递。与 Layer 0 相比，Layer 1 的 `hc_pre` 算法没有变化，变化的是第一次调用的系数来源。[Block.forward](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L909-L997)
-
-## 6. 后续模块为什么不再展开
-
-Engram 写回之后，Layer 1 进入与 Layer 0 同构的 Block。下面只记录复用关系；公式、shape 和内部步骤见 [Layer 0：从四路残差到局部注意力与 MoE](02-layer0.md)。
-
-| 模块 | Layer 1 相对 Layer 0 | 需要记住的差别 |
-|---|---|---|
-| Attention 侧 mHC | 算法与 shape 相同，参数独立 | 系数从 Engram 更新后的 $X'$ 预测；首次汇聚用动态 `pre_next` |
-| 两个入口 RMSNorm | 相同结构，参数独立 | 输入数值不同 |
-| Local Attention / SWA | 相同结构，参数独立 | 同为 128-token 窗口；没有 global KV、Compressor 或 Indexer |
-| Attention 侧 `hc_post` | 相同 | residual 是 Engram 更新后的四路张量 |
-| MoE 侧 mHC | 相同结构，参数独立 | 其 `ffn_pre` 传给 Layer 2 |
-| MoE FFN | 相同结构，参数独立 | 仍是 Top-6 routed + 1 shared expert |
-| Local KV cache 与 RoPE 表 | 相同 shape，各层独立 | 不与 Layer 0 共用缓存或权重 |
-
-所以 Layer 1 可以概括为：
-
-$$
-\boxed{
-\mathrm{Layer\ 1}
-=\mathrm{Layer\ 0\ 基准\ Block}
-+\mathrm{前置\ Engram}
-+\mathrm{动态跨层\ pre}
-}
-$$
-
-这里的加号表示结构差异，不表示参数共享。
-
-## 7. 参数量与 GPU 驻留字节
-
-### 7.1 Layer 1 Engram 的逻辑参数量
-
-只统计可学习模型标量，FP8 scale 计入驻留字节、不重复算作逻辑模型参数：
+#### 逻辑参数量
 
 | 参数 | Shape | 逻辑参数量 |
 |---|---|---:|
@@ -361,17 +300,15 @@ P_{\mathrm{Engram1}}
 }
 $$
 
-技术报告中的“196B Engram”是 Layer 1 与 Layer 14 两个模块的模型级近似；这里给的是 Layer 1 单个模块按固定配置得到的精确逻辑参数量。
+技术报告中的“196B Engram”是 Layer 1 与 Layer 14 两个模块的模型级近似；这里给的是 Layer 1 单个 Engram 按固定配置得到的精确逻辑参数量。
 
-### 7.2 Engram 的参考 GPU 权重存储
+#### 参考 GPU 权重存储
 
 固定 reference 中：
 
 - Engram 表用 FP8 E4M3 数据，每 32 个元素配一个 E8M0 scale。
 - $W_E$ 用 FP8 E4M3 数据和 $32\times32$ block scale。
 - $W_Q,W_K$ 用 BF16。
-
-因此：
 
 | 部分 | FP8 / BF16 数据与 scale | GPU 驻留字节 |
 |---|---|---:|
@@ -389,40 +326,17 @@ M_{\mathrm{Engram1,param}}
 }
 $$
 
-### 7.3 Layer 1 整层参数汇总
+这不表示生产部署必须把整个表放在单张 GPU：官方报告说明确定性地址允许预取，参考实现也支持按行跨 `world_size` 分片，并在查表后合并结果。这里的数值是便于核算的 `world_size=1` 基准。
 
-Layer 1 的基准 Block 参数结构与 Layer 0 相同，再加本层 Engram：
+### 2.8 前向计算量
 
-| 部分 | 逻辑参数量 | GPU 驻留字节 |
-|---|---:|---:|
-| 基准 Block：两套 mHC、Norm、SWA、MoE | 13,754,511,990 | 7,423,022,552 B |
-| Layer 1 Engram | 98,462,906,368 | 101,535,150,272 B |
-| **Layer 1 合计** | **112,217,418,358** | **108,958,172,824 B** |
-
-$$
-\boxed{P_{\mathrm{Layer1}}=112217418358\approx112.217\ \mathrm{B}}
-$$
-
-$$
-\boxed{
-M_{\mathrm{Layer1,param}}
-=108958172824\ \mathrm{Byte}
-\approx108.958\ \mathrm{GB}
-\approx101.475\ \mathrm{GiB}
-}
-$$
-
-Engram 占 Layer 1 逻辑参数的约 **87.74%**，占参考权重驻留字节的约 **93.19%**。这不表示生产部署必须把 101.5 GB Engram 全放在单张 GPU：官方报告明确采用确定性地址进行预取，参考实现也支持按行跨 `world_size` 分片，并在查表后合并结果。本节的单卡完整驻留值是便于核算的 `world_size=1` 基准，不是部署建议。
-
-## 8. 前向计算量
-
-### 8.1 统计口径
+#### 统计口径
 
 沿用 Layer 0：统计数学前向的标量加、减、乘，每次计 1；`XOR`、整数取模、逻辑 Lookup、`rsqrt`、`sqrt`、`exp`、除法和比较单列。忽略量化/反量化、类型转换、通信、reshape、数据搬运和具体 kernel 融合。
 
 Hash 在官方 reference 中同时生成 Layer 1、14 的地址。为了与“本层增量”一致，主表只归因 Layer 1 的一个 Hash slice；完整 Hash 前置调用的整数操作量在表后单独说明。
 
-### 8.2 Engram 每 token 的算法级运算
+#### Engram 每 token 的算法级运算
 
 | 阶段 | Layer 1 每 token 的加 / 减 / 乘 | 其他运算 |
 |---|---:|---|
@@ -476,7 +390,131 @@ $$
 
 完整 `NgramHashState.forward` 一次会同时计算 Layer 1 和 Layer 14，所以参考调用的 Hash 主体为每 token **8 次整数乘法、6 次 XOR、48 次取模和 48 次 offset 加法**，但 Token 压缩映射仍只做一次。本文把其中一半 Hash 主体归因给 Layer 1；分析 Layer 14 时不能再次计入共享 Token 映射和缓存。
 
-### 8.3 Layer 1 整层计算量
+### 2.9 Required Global Memory 理论下界（理想融合口径）
+
+与 Layer 0 的算子章节采用相同口径：Engram 内部的 $E_{\mathrm{flat}},F,K_E,V_E,D,g$ 假设可以融合、分块或复用工作区，不要求全部完整写回 Global Memory；这里只统计长期权重、算子边界输入与输出。
+
+Layer 1 Engram body 的逻辑边界包括四路 BF16 残差输入、24 个 INT64 索引和四路 BF16 残差输出：
+
+| 类别 | Tensor | Global Memory Size |
+|---|---|---:|
+| Parameter | Engram 表、$W_E,W_Q,W_K$ 及 FP8 scale | 101,535,150,272 B |
+| Input | $X:[B,S,4,5120]$ BF16 | $40960N$ B |
+| Input | $I^{(1)}:[B,S,24]$ INT64 | $192N$ B |
+| Output | $X':[B,S,4,5120]$ BF16 | $40960N$ B |
+
+如果把 Layer 1 的索引切片视为独立逻辑输入，则：
+
+$$
+\boxed{
+M_{\mathrm{Engram1,body}}
+=101535150272+82112N\ \mathrm{Byte}
+}
+$$
+
+固定 reference 实际不会重新分配这份 $192N$ Byte 的切片：$I^{(1)}$ 是完整 `engram_hashes:[B,S,2,24]` 的视图。模型级 Hash 前置组件还持有 1,035,072 Byte 固定 buffer、$8B_{\max}S_{\max}$ Byte 压缩 Token 历史 cache，以及 $384N$ Byte 的两层完整 Hash 输出。因此按真实共享分配、又不重复计算视图时，Engram 系统的最低占用为：
+
+$$
+\boxed{
+M_{\mathrm{Engram1+shared\ hash,min}}
+=101536185344
++82304N
++8B_{\max}S_{\max}
+\quad\mathrm{Byte}
+}
+$$
+
+多模态路径若把 `engram_mask:[B,S]` 独立计入，再加 $N$ Byte。这里没有加入本层局部 Attention 的 KV cache、RoPE 表和跨层 `pre_next`；它们属于 Layer 1 整层状态，将在第 5 节统一汇总。上式也不是进程峰值显存或显存读写量。
+
+## 3. Layer 1 第一次 `hc_pre` 的真正变化
+
+模型只在最初把 embedding 扩成四路时创建一次 identity-pre：
+
+$$
+p^{\mathrm{identity}}=[1,0,0,0].
+$$
+
+Layer 0 的 Attention 入口使用它；Layer 0 执行结束后返回 MoE 侧生成的 `ffn_pre`，即 $p^{(0)}_{\mathrm{next}}$。Layer 1 不会重新创建 identity-pre，而是直接用这个动态状态汇聚 Engram 更新后的四路残差：
+
+$$
+\boxed{
+Z^{(1)}_{b,t,d}
+=\sum_{c=0}^{3}
+p^{(0)}_{\mathrm{next},b,t,c}
+X'_{b,t,c,d}
+},
+\qquad Z^{(1)}:[B,S,5120].
+$$
+
+与此同时，Layer 1 Attention 侧的 `hc_mixes` 已经从 $X'$ 预测出新的 `attn_pre/post/comb`。但这里的第一次 `hc_pre` 仍使用**上一层**传来的 $p^{(0)}_{\mathrm{next}}$；本层新生成的 `attn_pre` 留给紧随其后的 MoE 入口。顺序是：
+
+$$
+\underbrace{p^{(0)}_{\mathrm{next}}}_{\text{Layer 0 MoE 产生}}
+\xrightarrow{\mathrm{Layer\ 1\ Attention\ hc\_pre}}
+\underbrace{p^{(1)}_{A}}_{\text{Layer 1 Attention 产生}}
+\xrightarrow{\mathrm{Layer\ 1\ MoE\ hc\_pre}}
+\underbrace{p^{(1)}_{\mathrm{next}}}_{\text{Layer 1 MoE 产生}}.
+$$
+
+这正是 Single-Pass mHC 的跨子层、跨层系数传递。与 Layer 0 相比，Layer 1 的 `hc_pre` 算法没有变化，变化的是第一次调用的系数来源。[Block.forward](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L909-L997)
+
+## 4. 继承自 Layer 0 的模块
+
+Engram 写回之后，Layer 1 进入与 Layer 0 同构的 Block。下面只记录复用关系；公式、shape 和内部步骤见 [Layer 0：从四路残差到局部注意力与 MoE](02-layer0.md)。
+
+| 模块 | Layer 1 相对 Layer 0 | 需要记住的差别 |
+|---|---|---|
+| Attention 侧 mHC | 算法与 shape 相同，参数独立 | 系数从 Engram 更新后的 $X'$ 预测；首次汇聚用动态 `pre_next` |
+| 两个入口 RMSNorm | 相同结构，参数独立 | 输入数值不同 |
+| Local Attention / SWA | 相同结构，参数独立 | 同为 128-token 窗口；没有 global KV、Compressor 或 Indexer |
+| Attention 侧 `hc_post` | 相同 | residual 是 Engram 更新后的四路张量 |
+| MoE 侧 mHC | 相同结构，参数独立 | 其 `ffn_pre` 传给 Layer 2 |
+| MoE FFN | 相同结构，参数独立 | 仍是 Top-6 routed + 1 shared expert |
+| Local KV cache 与 RoPE 表 | 相同 shape，各层独立 | 不与 Layer 0 共用缓存或权重 |
+
+所以 Layer 1 可以概括为：
+
+$$
+\boxed{
+\mathrm{Layer\ 1}
+=\mathrm{Layer\ 0\ 基准\ Block}
++\mathrm{前置\ Engram}
++\mathrm{动态跨层\ pre}
+}
+$$
+
+这里的加号表示结构差异，不表示参数共享。
+
+## 5. Layer 1 整层汇总
+
+Engram、动态 `pre_next` 和继承模块已经分别说明。下面按照 Layer 0 的写法，只汇总整层参数、计算、显存和跨层输出，不再把 Engram 算子拆开重复讲述。
+
+### 5.1 整层参数量与 GPU 驻留字节
+
+Layer 1 的基准 Block 参数结构与 Layer 0 相同，再加本层 Engram：
+
+| 部分 | 逻辑参数量 | GPU 驻留字节 |
+|---|---:|---:|
+| 基准 Block：两套 mHC、Norm、SWA、MoE | 13,754,511,990 | 7,423,022,552 B |
+| Layer 1 Engram | 98,462,906,368 | 101,535,150,272 B |
+| **Layer 1 合计** | **112,217,418,358** | **108,958,172,824 B** |
+
+$$
+\boxed{P_{\mathrm{Layer1}}=112217418358\approx112.217\ \mathrm{B}}
+$$
+
+$$
+\boxed{
+M_{\mathrm{Layer1,param}}
+=108958172824\ \mathrm{Byte}
+\approx108.958\ \mathrm{GB}
+\approx101.475\ \mathrm{GiB}
+}
+$$
+
+Engram 占 Layer 1 逻辑参数的约 **87.74%**，占参考权重驻留字节的约 **93.19%**。这不表示生产部署必须把 101.5 GB Engram 全放在单张 GPU：官方报告明确采用确定性地址进行预取，参考实现也支持按行跨 `world_size` 分片，并在查表后合并结果。本节的单卡完整驻留值是便于核算的 `world_size=1` 基准，不是部署建议。
+
+### 5.2 整层前向计算量
 
 Layer 0 的官方通用路径为：
 
@@ -498,11 +536,11 @@ $$
 
 在暂不考虑 $\overline L$ 的固定部分时，Engram 使本层每 token 的加/减/乘主项比 Layer 0 reference 增加约 **41.68%**。这个比例不是实际延迟比例：Engram 表可预取和分片，FP8 GEMM、访存、通信、并发重叠与 kernel 融合都会改变硬件时间。[官方报告的 Engram 预取说明](https://arxiv.org/abs/2609.19969)
 
-## 9. Required Global Memory 理论下界与状态
+### 5.3 整层 Required Global Memory 理论下界与状态
 
 这一节给出固定 reference 的**共享状态视角**：参数和 scale、层边界 I/O、本层 local Attention 状态、模型级 Hash 固定 buffer、Token 历史 cache，以及同时服务 Layer 1 和 Layer 14 的完整 `engram_hashes`。内部 $E_{\mathrm{flat}},F,K_E,V_E,D,g$ 假设可通过融合、分块或工作区复用，不要求全部同时写入 Global Memory。
 
-### 9.1 边界 I/O 与持久状态
+#### 边界 I/O 与持久状态
 
 Layer 1 输入和输出均包含四路 BF16 残差与一份 FP32 pre：
 
@@ -537,7 +575,7 @@ $$
 
 前四项合计 1,035,072 Byte。`engram_hashes` 在进入 Layer 0 前生成，并至少保留到 Layer 14 消费完成；Layer 1 使用的 `[B,S,24]` 只是视图，不再分配 192N Byte。
 
-### 9.2 汇总公式
+#### 汇总公式
 
 纯文本路径没有 `engram_mask`，于是：
 
@@ -574,7 +612,7 @@ $$
 
 这仍不是进程峰值显存，也不是显存读写量：未融合激活、FP8 解量化临时值、GEMM workspace、allocator 保留区、分片通信 buffer 以及实际推理引擎的 Engram CPU / host-memory offload 都会改变测量结果。
 
-## 10. Layer 1 的跨层输出与结论
+### 5.4 跨层输出与结论
 
 Layer 1 最终输出：
 
@@ -592,7 +630,7 @@ Layer 1 最终输出：
 2. **Engram 向四路写入共享 Value、独立 Gate。** 它更新四路残差，却不改动 Layer 0 传来的动态 `pre_next`。
 3. **本层容量主要由条件记忆决定。** 单个 Engram 带来 98.463B 逻辑参数和约 94.562 GiB 的 `world_size=1` 参考权重驻留；实际部署依赖行分片、预取或 host-memory offload，而不是把它理解成必须单卡常驻的普通线性层。
 
-## 11. 资料来源与版本说明
+## 6. 资料来源与版本说明
 
 - [DeepSeek-V4.1-Flash 技术报告](https://arxiv.org/abs/2609.19969)：模型总体结构、两处 Engram、196B 总容量、Hash head 与部署预取。
 - [Engram 原始论文](https://arxiv.org/abs/2601.07372)：条件记忆、Tokenizer Compression、Multi-Head Hashing 与 Context-aware Gating。
