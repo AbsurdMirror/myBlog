@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Layer 1：从 Engram 写入到局部注意力与 MoE · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css"></head>
+<body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/03-layer1.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="layer-1从-engram-写入到局部注意力与-moe">Layer 1：从 Engram 写入到局部注意力与 MoE</h1>
+<h2 id="相对-layer-0只看两处差异">1. 相对 Layer 0，只看两处差异</h2>
+<p>本文分析 <strong>DeepSeek-V4.1-Flash 的 Layer 1</strong>。Layer 0 已经完整讲过 mHC、RMSNorm、局部 Attention / SWA 和 MoE；Layer 1 不再重复这些推导，而是回答两个新问题：</p>
+<ol type="1">
+<li>Engram 怎样在普通 Transformer Block 之前，根据当前 token 及其局部历史检索条件记忆，并写回四路残差？</li>
+<li>Layer 1 的第一次 <code>hc_pre</code> 为什么不再使用固定的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mn>1</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[1,0,0,0]</annotation></semantics></math>，而是使用 Layer 0 MoE 侧传来的动态 <code>pre_next</code>？</li>
+</ol>
+<p>记</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi><mo>,</mo><mspace width="2.0em"></mspace><mi>D</mi><mo>=</mo><mn>5120</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>C</mi><mo>=</mo><mn>4</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>W</mi><mo>=</mo><mn>128</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+N=BS,\qquad D=5120,\qquad C=4,\qquad W=128.
+</annotation></semantics></math></p>
+<p>Layer 1 从 Layer 0 接收：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(BF16)</mtext><mo>,</mo><mspace width="2.0em"></mspace><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(FP32)</mtext><mi>.</mi></mrow><annotation encoding="application/x-tex">
+X^{(1)}_{\mathrm{in}}:[B,S,4,5120]\quad\text{(BF16)},
+\qquad
+p^{(0)}_{\mathrm{next}}:[B,S,4]\quad\text{(FP32)}.
+</annotation></semantics></math></p>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">X^{(1)}_{\mathrm{in}}</annotation></semantics></math> 是四路残差，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">p^{(0)}_{\mathrm{next}}</annotation></semantics></math> 是 Layer 0 的 MoE 侧 mHC 生成的下一次汇聚系数。完整数据流为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>,</mo><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo stretchy="true" form="postfix">)</mo></mrow><mo>→</mo><mrow><mi mathvariant="normal">E</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi></mrow><mo>→</mo><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mspace width="0.222em"></mspace><mn mathvariant="normal">1</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">B</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">k</mi></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>,</mo><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo stretchy="true" form="postfix">)</mo></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+(X^{(1)}_{\mathrm{in}},p^{(0)}_{\mathrm{next}})
+\rightarrow \mathrm{Engram}
+\rightarrow \mathrm{Layer\ 1\ Block}
+\rightarrow (X^{(1)}_{\mathrm{out}},p^{(1)}_{\mathrm{next}})
+}
+</annotation></semantics></math></p>
+<p>逐步对照如下。“结构相同”只表示算子、shape 和执行顺序与 Layer 0 相同；Layer 1 拥有自己的参数，输入数值也已经被 Engram 改变，并不与 Layer 0 共享权重或计算结果。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>步骤</th>
+<th>相对 Layer 0</th>
+<th>Layer 1 的行为</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1. Engram Hash、查表、门控与四路写回</td>
+<td><strong>新增</strong></td>
+<td>在普通 Block 前修改四路残差；不修改传入的 <code>pre_next</code></td>
+</tr>
+<tr class="even">
+<td>2. Attention 侧 mHC 系数生成</td>
+<td>结构相同</td>
+<td>从 Engram 更新后的四路残差预测本层 <code>attn_pre/post/comb</code></td>
+</tr>
+<tr class="odd">
+<td>3. Attention 入口 <code>hc_pre</code></td>
+<td><strong>输入不同</strong></td>
+<td>使用 Layer 0 MoE 侧生成的动态 <code>pre_next</code>，不再使用 identity-pre</td>
+</tr>
+<tr class="even">
+<td>4. Attention 入口 RMSNorm</td>
+<td>结构相同</td>
+<td>独立参数，输入来自步骤 3</td>
+</tr>
+<tr class="odd">
+<td>5. Local Attention / SWA</td>
+<td>结构相同</td>
+<td>仍是 128-token 局部窗口，没有 compressed/global KV 或 Indexer</td>
+</tr>
+<tr class="even">
+<td>6. Attention 侧 <code>hc_post</code></td>
+<td>结构相同</td>
+<td>融合 Attention 输出和 Engram 更新后的四路残差</td>
+</tr>
+<tr class="odd">
+<td>7. MoE 侧 mHC 系数生成</td>
+<td>结构相同</td>
+<td>生成本层 <code>ffn_pre/post/comb</code></td>
+</tr>
+<tr class="even">
+<td>8. MoE 入口 <code>hc_pre</code></td>
+<td>结构相同</td>
+<td>使用本层 Attention 侧生成的 <code>attn_pre</code></td>
+</tr>
+<tr class="odd">
+<td>9. MoE 入口 RMSNorm</td>
+<td>结构相同</td>
+<td>独立参数</td>
+</tr>
+<tr class="even">
+<td>10. MoE FFN</td>
+<td>结构相同</td>
+<td>384 个 routed experts 选 6 个，并执行 1 个 shared expert</td>
+</tr>
+<tr class="odd">
+<td>11. MoE 侧 <code>hc_post</code></td>
+<td>结构相同</td>
+<td>输出四路残差，并把 <code>ffn_pre</code> 作为下一层的 <code>pre_next</code></td>
+</tr>
+</tbody>
+</table>
+<p>固定配置中 <code>compress_ratios[1]=0</code>，而 <code>kv_source_layers</code> 与 <code>index_source_layers</code> 都从 Layer 2 开始。因此 Layer 1 与 Layer 0 一样只执行 SWA；本页新增的注意力外路径只有 Engram。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">配置核查</a></p>
+<h2 id="engram-在哪里解决什么问题">2. Engram 在哪里，解决什么问题</h2>
+<p>Engram 把条件记忆作为 MoE 条件计算之外的另一条稀疏轴：MoE 根据隐藏状态选择少量专家进行动态计算；Engram 则根据确定性的局部 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>-gram 地址，从巨大表中只读取少量行。官方论文把这一过程概括为 Tokenizer Compression、Multi-Head Hashing、Context-aware Gating 和 Multi-branch Integration。<a href="https://arxiv.org/abs/2601.07372">Engram 论文</a></p>
+<p>DeepSeek-V4.1-Flash 在零起始编号的 Layer 1 和 Layer 14 各放置一个 Engram。两者合计约 196B 逻辑参数；每个模块使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>-gram 阶数 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">{</mo><mn>2</mn><mo>,</mo><mn>3</mn><mo>,</mo><mn>4</mn><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">\{2,3,4\}</annotation></semantics></math>、8 个 Hash head，每个阶数共 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>8</mn><mo>×</mo><mn>256</mn><mo>=</mo><mn>2048</mn></mrow><annotation encoding="application/x-tex">8\times256=2048</annotation></semantics></math> 维查表结果。Layer 1 的表有 384,006,168 行，每行 256 维。<a href="https://arxiv.org/abs/2609.19969">技术报告 §2.4.2</a></p>
+<p>参考前向并不是进入 Layer 1 后才开始构造 Hash。<code>Transformer.forward</code> 会在进入层循环前，根据原始 <code>input_ids</code> 一次生成两个 Engram 层的 Hash：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>2</mn><mo>,</mo><mn>24</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(INT64)</mtext><mi>.</mi></mrow><annotation encoding="application/x-tex">
+I_{\mathrm{all}}:[B,S,2,24]\quad\text{(INT64)}.
+</annotation></semantics></math></p>
+<p>这里维度 2 对应 Layer 1 与 Layer 14，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>24</mn><mo>=</mo><mn>3</mn><mo>×</mo><mn>8</mn></mrow><annotation encoding="application/x-tex">24=3\times8</annotation></semantics></math> 对应三个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>-gram 阶数和八个 Hash head。执行到 Layer 1 时，只取</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>I</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo>=</mo><msub><mi>I</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">[</mo><mo>:</mo><mo>,</mo><mo>:</mo><mo>,</mo><mn>0</mn><mo>,</mo><mo>:</mo><mo stretchy="true" form="postfix">]</mo></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>24</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+I^{(1)}=I_{\mathrm{all}}[:,:,0,:]:[B,S,24].
+</annotation></semantics></math></p>
+<p>因此需要把两个位置分清：</p>
+<ul>
+<li><strong>Transformer 级 Hash 前置组件</strong>：处理 Token 压缩、历史状态、两个 Engram 层的 Hash 与索引。</li>
+<li><strong>Layer 1 Engram 模块</strong>：读取本层的 24 个索引，执行查表、投影、门控和残差写回。</li>
+</ul>
+<p>这也解释了为什么后面的显存分析不能把完整 Hash buffer 在 Layer 1 和 Layer 14 各算一遍。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1245-L1271">前向接入位置</a></p>
+<h2 id="从-token-到-24-个查表地址">3. 从 Token 到 24 个查表地址</h2>
+<h3 id="token-压缩与跨前向历史">3.1 Token 压缩与跨前向历史</h3>
+<p>原始 Token ID 为</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>T</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mn>0</mn><mo>≤</mo><msub><mi>T</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>&lt;</mo><mn>129280</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+T:[B,S],\qquad 0\le T_{b,t}&lt;129280.
+</annotation></semantics></math></p>
+<p>Hash 前先通过固定映射 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math> 把 129,280 个原始 Token ID 映射到 99,092 个压缩 ID：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>T</mi><msub><mi>′</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>=</mo><mi>P</mi><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>T</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi></mrow></msub><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+T&#39;_{b,t}=P[T_{b,t}].
+</annotation></semantics></math></p>
+<p>这张映射在模型构建时由 tokenizer 生成，会对可完整解码的 token 文本执行 Unicode 规范化、去音调、转小写、空白折叠和首尾空白处理；规范化结果相同的 token 共用压缩 ID。它是固定运行时 buffer，不是可学习参数。</p>
+<p>Hash 组件还维护</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><msub><mi>S</mi><mo>max</mo></msub><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(INT64)</mtext><mo>,</mo></mrow><annotation encoding="application/x-tex">
+T_{\mathrm{cache}}:[B_{\max},S_{\max}]\quad\text{(INT64)},
+</annotation></semantics></math></p>
+<p>所以 Decode 阶段可以读取 Prefill 或更早 Decode 已写入的最近三个压缩 Token ID，而不必重新处理全部历史。对于图像 span，压缩缓存写入特殊的 <code>DEAD=-1</code>；任何跨过 <code>DEAD</code> 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>-gram 都会被阻断并使用固定 <code>pad_id</code> 补齐。</p>
+<p>令 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>r</mi></mrow></msub><annotation encoding="application/x-tex">u_{b,t,r}</annotation></semantics></math> 表示位置 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math> 向前回看 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math> 步后的有效压缩 ID，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">r=0</annotation></semantics></math> 是当前 token：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>u</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>r</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mi>T</mi><msub><mi>′</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>−</mo><mi>r</mi></mrow></msub><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mi>t</mi><mo>−</mo><mi>r</mi><mo>≥</mo><mn>0</mn><mspace width="0.222em"></mspace><mo>∧</mo><mspace width="0.222em"></mspace><mrow><mo stretchy="true" form="prefix">[</mo><mi>t</mi><mo>−</mo><mi>r</mi><mo>,</mo><mi>t</mi><mo stretchy="true" form="postfix">]</mo></mrow><mrow><mspace width="0.333em"></mspace><mtext mathvariant="normal"> 内没有无效 token</mtext></mrow><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>t</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">其他</mtext><mi>.</mi></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">
+u_{b,t,r}=
+\begin{cases}
+T&#39;_{b,t-r}, &amp; t-r\ge0\ \land\ [t-r,t]\text{ 内没有无效 token},\\
+t_{\mathrm{pad}}, &amp; \text{其他}.
+\end{cases}
+</annotation></semantics></math></p>
+<h3 id="乘法-xor-hash-与互不重叠的分区">3.2 乘法-XOR Hash 与互不重叠的分区</h3>
+<p>对 Engram 层 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>ℓ</mo><annotation encoding="application/x-tex">\ell</annotation></semantics></math>，四个回看位置各有一个由层号确定的奇数乘数 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>μ</mi><mrow><mo>ℓ</mo><mo>,</mo><mi>r</mi></mrow></msub><annotation encoding="application/x-tex">\mu_{\ell,r}</annotation></semantics></math>。2、3、4-gram 的滚动 Hash 为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>h</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>n</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mo>ℓ</mo><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>=</mo><msubsup><mo>⨁</mo><mrow><mi>r</mi><mo>=</mo><mn>0</mn></mrow><mrow><mi>n</mi><mo>−</mo><mn>1</mn></mrow></msubsup><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>u</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>r</mi></mrow></msub><msub><mi>μ</mi><mrow><mo>ℓ</mo><mo>,</mo><mi>r</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>n</mi><mo>∈</mo><mo stretchy="false" form="prefix">{</mo><mn>2</mn><mo>,</mo><mn>3</mn><mo>,</mo><mn>4</mn><mo stretchy="false" form="postfix">}</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+h^{(\ell)}_{b,t,n}
+=\bigoplus_{r=0}^{n-1}
+\left(u_{b,t,r}\mu_{\ell,r}\right),
+\qquad n\in\{2,3,4\}.
+</annotation></semantics></math></p>
+<p>每个阶数再进入八个不同的质数桶。记 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>M</mi><mrow><mo>ℓ</mo><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi></mrow></msub><annotation encoding="application/x-tex">M_{\ell,n,q}</annotation></semantics></math> 为模数、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>O</mi><mrow><mo>ℓ</mo><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi></mrow></msub><annotation encoding="application/x-tex">O_{\ell,n,q}</annotation></semantics></math> 为这段桶区间的起始 offset：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>i</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mo>ℓ</mo><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>=</mo><msub><mi>O</mi><mrow><mo>ℓ</mo><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi></mrow></msub><mo>+</mo><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>h</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>n</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mo>ℓ</mo><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mrow><mspace width="0.222em"></mspace><mo>mod</mo><mspace width="0.222em"></mspace><msub><mi>M</mi><mrow><mo>ℓ</mo><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi></mrow></msub></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>q</mi><mo>=</mo><mn>0</mn><mo>,</mo><mi>…</mi><mo>,</mo><mn>7</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+i^{(\ell)}_{b,t,n,q}
+=O_{\ell,n,q}+
+\left(h^{(\ell)}_{b,t,n}\bmod M_{\ell,n,q}\right),
+\qquad q=0,\ldots,7.
+</annotation></semantics></math></p>
+<p>三个阶数乘八个 head，得到每 token 24 个地址。每个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">(</mo><mi>n</mi><mo>,</mo><mi>q</mi><mo stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(n,q)</annotation></semantics></math> 使用不同质数大小和互不重叠的 offset，因此可以把它们理解为 24 张逻辑表；在参数存储上，它们拼成一张连续大表。</p>
+<p><img src="assets/13_layer1_engram_lookup.png" alt="图 1：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表" /></p>
+<p>图中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>G</mi><mn>0</mn></msub><annotation encoding="application/x-tex">G_0</annotation></semantics></math> 表示当前 token，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>G</mi><mn>1</mn></msub><mo>,</mo><msub><mi>G</mi><mn>2</mn></msub><mo>,</mo><msub><mi>G</mi><mn>3</mn></msub></mrow><annotation encoding="application/x-tex">G_1,G_2,G_3</annotation></semantics></math> 依次向历史回看；<code>mask/pad/shift</code> 还读取未单独画出的有效性 mask。正文公式是精确定义，图中的蓝色 <code>$B\times S$</code> 块用于简写逐 token 的逻辑 shape。</p>
+<p>Layer 1 的可学习表为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>E</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>384006168</mn><mo>,</mo><mn>256</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+E_{\mathrm{table}}:[384006168,256].
+</annotation></semantics></math></p>
+<p>按 24 个地址读取：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>E</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi><mo>,</mo><mo>:</mo></mrow></msub><mo>=</mo><msub><mi>E</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">[</mo><msubsup><mi>i</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>n</mi><mo>,</mo><mi>q</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>,</mo><mo>:</mo><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>E</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>3</mn><mo>,</mo><mn>8</mn><mo>,</mo><mn>256</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+E_{b,t,n,q,:}
+=E_{\mathrm{table}}[i^{(1)}_{b,t,n,q},:],
+\qquad E:[B,S,3,8,256].
+</annotation></semantics></math></p>
+<p>最后展平：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>6144</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mn>6144</mn><mo>=</mo><mn>3</mn><mo>×</mo><mn>8</mn><mo>×</mo><mn>256</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+E_{\mathrm{flat}}:[B,S,6144],
+\qquad6144=3\times8\times256.
+</annotation></semantics></math></p>
+<p>“每 token 读取 24 行”是逻辑查表口径。固定 reference 中 FP8 数据与对应 E8M0 scale 分别通过 <code>F.embedding</code> gather，因此它不能直接等同于底层访存指令数。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py#L129-L184">Hash 实现</a></p>
+<h2 id="从查表结果到四路残差写回">4. 从查表结果到四路残差写回</h2>
+<h3 id="一次投影生成四个-key-和一个共享-value">4.1 一次投影生成四个 Key 和一个共享 Value</h3>
+<p><img src="assets/14_layer1_engram_computation.png" alt="图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回" /></p>
+<p>Engram 接收查表结果和 Layer 0 输出的四路残差：</p>
+<table>
+<thead>
+<tr class="header">
+<th>对象</th>
+<th>Shape</th>
+<th>性质</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">E_{\mathrm{flat}}</annotation></semantics></math></td>
+<td><code>[B,S,6144]</code></td>
+<td>24 行查表结果展平，BF16</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math></td>
+<td><code>[B,S,4,5120]</code></td>
+<td>四路残差，BF16</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>E</mi></msub><annotation encoding="application/x-tex">W_E</annotation></semantics></math></td>
+<td><code>[25600,6144]</code></td>
+<td>FP8 可学习投影，无 bias</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>Q</mi></msub><mo>,</mo><msub><mi>W</mi><mi>K</mi></msub></mrow><annotation encoding="application/x-tex">W_Q,W_K</annotation></semantics></math></td>
+<td>各 <code>[4,5120]</code></td>
+<td>BF16 可学习逐维缩放</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow></msub><annotation encoding="application/x-tex">T_{\mathrm{mask}}</annotation></semantics></math></td>
+<td><code>[B,S]</code></td>
+<td>可选 BOOL；图像位置为 false</td>
+</tr>
+</tbody>
+</table>
+<p>统一采用权重 <code>[输出,输入]</code> 约定：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>F</mi><mo>=</mo><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><msubsup><mi>W</mi><mi>E</mi><mi>𝖳</mi></msubsup><mo>,</mo><mspace width="2.0em"></mspace><mi>F</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>25600</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+F=E_{\mathrm{flat}}W_E^{\mathsf T},
+\qquad F:[B,S,25600].
+</annotation></semantics></math></p>
+<p>再按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>20480</mn><mo>+</mo><mn>5120</mn></mrow><annotation encoding="application/x-tex">20480+5120</annotation></semantics></math> 切分：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>K</mi><mi>E</mi></msub><mo>,</mo><msub><mi>V</mi><mi>E</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow><mo>=</mo><mo>split</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>F</mi><mo>,</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>20480</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+[K_E,V_E]=\operatorname{split}(F,[20480,5120]),
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>K</mi><mi>E</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mi>E</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+K_E:[B,S,4,5120],
+\qquad V_E:[B,S,5120].
+</annotation></semantics></math></p>
+<p>四路各有一个 Key，但 Value 只有一份。Engram 最终向四路写入相同的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>E</mi></msub><annotation encoding="application/x-tex">V_E</annotation></semantics></math>，差异来自四路各自的 gate。</p>
+<h3 id="归一化匹配分数与-signed-sqrt">4.2 归一化匹配分数与 Signed Sqrt</h3>
+<p>先合并两套逐维缩放：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi><mo>=</mo><msub><mi>W</mi><mi>Q</mi></msub><mo>⊙</mo><msub><mi>W</mi><mi>K</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+W=W_Q\odot W_K:[4,5120].
+</annotation></semantics></math></p>
+<p>对于残差流 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi><mo>∈</mo><mo stretchy="false" form="prefix">{</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo>,</mo><mn>2</mn><mo>,</mo><mn>3</mn><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">c\in\{0,1,2,3\}</annotation></semantics></math>，分别沿 5120 维计算 RMS 倒数：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>r</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow><mi>X</mi></msubsup><mo>=</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mfrac><mn>1</mn><mn>5120</mn></mfrac><munderover><mo>∑</mo><mrow><mi>d</mi><mo>=</mo><mn>0</mn></mrow><mn>5119</mn></munderover><msubsup><mi>X</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow><mn>2</mn></msubsup><mo>+</mo><mi>ϵ</mi><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mo>−</mo><mn>1</mn><mi>/</mi><mn>2</mn></mrow></msup><mo>,</mo></mrow><annotation encoding="application/x-tex">
+r^X_{b,t,c}
+=\left(\frac1{5120}\sum_{d=0}^{5119}X_{b,t,c,d}^2+\epsilon\right)^{-1/2},
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>r</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow><mi>K</mi></msubsup><mo>=</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mfrac><mn>1</mn><mn>5120</mn></mfrac><munderover><mo>∑</mo><mrow><mi>d</mi><mo>=</mo><mn>0</mn></mrow><mn>5119</mn></munderover><msubsup><mi>K</mi><mrow><mi>E</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow><mn>2</mn></msubsup><mo>+</mo><mi>ϵ</mi><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mo>−</mo><mn>1</mn><mi>/</mi><mn>2</mn></mrow></msup><mo>,</mo><mspace width="2.0em"></mspace><mi>ϵ</mi><mo>=</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>20</mn></mrow></msup><mi>.</mi></mrow><annotation encoding="application/x-tex">
+r^K_{b,t,c}
+=\left(\frac1{5120}\sum_{d=0}^{5119}K_{E,b,t,c,d}^2+\epsilon\right)^{-1/2},
+\qquad \epsilon=10^{-20}.
+</annotation></semantics></math></p>
+<p>加权归一化点积为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>D</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo>=</mo><mfrac><mrow><msubsup><mi>r</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow><mi>X</mi></msubsup><msubsup><mi>r</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow><mi>K</mi></msubsup></mrow><msqrt><mn>5120</mn></msqrt></mfrac><munderover><mo>∑</mo><mrow><mi>d</mi><mo>=</mo><mn>0</mn></mrow><mn>5119</mn></munderover><msub><mi>X</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><msub><mi>W</mi><mrow><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><msub><mi>K</mi><mrow><mi>E</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+D_{b,t,c}
+=\frac{r^X_{b,t,c}r^K_{b,t,c}}{\sqrt{5120}}
+\sum_{d=0}^{5119}
+X_{b,t,c,d}W_{c,d}K_{E,b,t,c,d}.
+</annotation></semantics></math></p>
+<p>固定实现不会直接把 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>D</mi><annotation encoding="application/x-tex">D</annotation></semantics></math> 送入 Sigmoid，而是先执行带符号平方根。这里使用 <code>copysign</code> 而不是简单的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>sign</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>D</mi><mo stretchy="true" form="postfix">)</mo></mrow><msqrt><mo>⋅</mo></msqrt></mrow><annotation encoding="application/x-tex">\operatorname{sign}(D)\sqrt{\cdot}</annotation></semantics></math>，从而与源码在 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>D</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">D=0</annotation></semantics></math> 时复制正号的边界行为一致：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>D</mi><mo accent="true">̃</mo></mover><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo>=</mo><mo>copysign</mo><mrow><mo stretchy="true" form="prefix">(</mo><msqrt><mrow><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><mrow><mo stretchy="true" form="prefix">|</mo><msub><mi>D</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo stretchy="true" form="postfix">|</mo></mrow><mo>,</mo><msup><mn>10</mn><mrow><mo>−</mo><mn>6</mn></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow></msqrt><mo>,</mo><msub><mi>D</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\widetilde D_{b,t,c}
+=\operatorname{copysign}\left(
+\sqrt{\max(|D_{b,t,c}|,10^{-6})},
+D_{b,t,c}
+\right).
+</annotation></semantics></math></p>
+<p>于是</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>g</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo>=</mo><mi>σ</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mover><mi>D</mi><mo accent="true">̃</mo></mover><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+g_{b,t,c}=\sigma(\widetilde D_{b,t,c}).
+</annotation></semantics></math></p>
+<p>多模态输入中的图像位置随后把 gate 置零；纯文本前向不需要 mask：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>g</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo>←</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>g</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><msub><mi>T</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>=</mo><mn>1</mn><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mn>0</mn><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><msub><mi>T</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>=</mo><mn>0</mn><mi>.</mi></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">
+g_{b,t,c}\leftarrow
+\begin{cases}
+g_{b,t,c},&amp;T_{\mathrm{mask},b,t}=1,\\
+0,&amp;T_{\mathrm{mask},b,t}=0.
+\end{cases}
+</annotation></semantics></math></p>
+<p>图 2 把这两步合并画在 Sigmoid 附近；源码顺序是 <strong>先 Sigmoid，再用 mask 置零</strong>。</p>
+<h3 id="四路写回但不改变-pre_next">4.3 四路写回，但不改变 <code>pre_next</code></h3>
+<p>最终输出为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><menclose notation="box"><mrow><mi>X</mi><msub><mi>′</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>=</mo><msub><mi>X</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>+</mo><msub><mi>g</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><msub><mi>V</mi><mrow><mi>E</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>d</mi></mrow></msub></mrow></menclose><mo>,</mo><mspace width="2.0em"></mspace><mi>X</mi><mi>′</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\boxed{
+X&#39;_{b,t,c,d}
+=X_{b,t,c,d}+g_{b,t,c}V_{E,b,t,d}
+},
+\qquad X&#39;:[B,S,4,5120].
+</annotation></semantics></math></p>
+<p>这一步有三个容易混淆的点：</p>
+<ol type="1">
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>E</mi></msub><annotation encoding="application/x-tex">V_E</annotation></semantics></math> 在四路之间共享，不是从表中读取四份不同 Value。</li>
+<li>四路 gate 独立，因此同一个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>E</mi></msub><annotation encoding="application/x-tex">V_E</annotation></semantics></math> 对四路的写入幅度不同。</li>
+<li>Engram 只返回更新后的四路残差 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">X&#39;</annotation></semantics></math>；Layer 0 传来的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">p^{(0)}_{\mathrm{next}}</annotation></semantics></math> 不经过 Engram，也不会被它重新计算。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L296-L365">Engram 前向</a></li>
+</ol>
+<h2 id="layer-1-第一次-hc_pre-的真正变化">5. Layer 1 第一次 <code>hc_pre</code> 的真正变化</h2>
+<p>模型只在最初把 embedding 扩成四路时创建一次 identity-pre：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>p</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">y</mi></mrow></msup><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><mn>1</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo>,</mo><mn>0</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+p^{\mathrm{identity}}=[1,0,0,0].
+</annotation></semantics></math></p>
+<p>Layer 0 的 Attention 入口使用它；Layer 0 执行结束后返回 MoE 侧生成的 <code>ffn_pre</code>，即 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">p^{(0)}_{\mathrm{next}}</annotation></semantics></math>。Layer 1 不会重新创建 identity-pre，而是直接用这个动态状态汇聚 Engram 更新后的四路残差：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><menclose notation="box"><mrow><msubsup><mi>Z</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>d</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo>=</mo><munderover><mo>∑</mo><mrow><mi>c</mi><mo>=</mo><mn>0</mn></mrow><mn>3</mn></munderover><msubsup><mi>p</mi><mrow><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mi>X</mi><msub><mi>′</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub></mrow></menclose><mo>,</mo><mspace width="2.0em"></mspace><msup><mi>Z</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msup><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\boxed{
+Z^{(1)}_{b,t,d}
+=\sum_{c=0}^{3}
+p^{(0)}_{\mathrm{next},b,t,c}
+X&#39;_{b,t,c,d}
+},
+\qquad Z^{(1)}:[B,S,5120].
+</annotation></semantics></math></p>
+<p>与此同时，Layer 1 Attention 侧的 <code>hc_mixes</code> 已经从 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">X&#39;</annotation></semantics></math> 预测出新的 <code>attn_pre/post/comb</code>。但这里的第一次 <code>hc_pre</code> 仍使用<strong>上一层</strong>传来的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">p^{(0)}_{\mathrm{next}}</annotation></semantics></math>；本层新生成的 <code>attn_pre</code> 留给紧随其后的 MoE 入口。顺序是：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><munder><munder><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo accent="true">⏟</mo></munder><mtext mathvariant="normal">Layer 0 MoE 产生</mtext></munder><mover><mo>→</mo><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mspace width="0.222em"></mspace><mn mathvariant="normal">1</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">A</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></mover><munder><munder><msubsup><mi>p</mi><mi>A</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo accent="true">⏟</mo></munder><mtext mathvariant="normal">Layer 1 Attention 产生</mtext></munder><mover><mo>→</mo><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mspace width="0.222em"></mspace><mn mathvariant="normal">1</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">M</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">E</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">h</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></mover><munder><munder><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><mo accent="true">⏟</mo></munder><mtext mathvariant="normal">Layer 1 MoE 产生</mtext></munder><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\underbrace{p^{(0)}_{\mathrm{next}}}_{\text{Layer 0 MoE 产生}}
+\xrightarrow{\mathrm{Layer\ 1\ Attention\ hc\_pre}}
+\underbrace{p^{(1)}_{A}}_{\text{Layer 1 Attention 产生}}
+\xrightarrow{\mathrm{Layer\ 1\ MoE\ hc\_pre}}
+\underbrace{p^{(1)}_{\mathrm{next}}}_{\text{Layer 1 MoE 产生}}.
+</annotation></semantics></math></p>
+<p>这正是 Single-Pass mHC 的跨子层、跨层系数传递。与 Layer 0 相比，Layer 1 的 <code>hc_pre</code> 算法没有变化，变化的是第一次调用的系数来源。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L909-L997">Block.forward</a></p>
+<h2 id="后续模块为什么不再展开">6. 后续模块为什么不再展开</h2>
+<p>Engram 写回之后，Layer 1 进入与 Layer 0 同构的 Block。下面只记录复用关系；公式、shape 和内部步骤见 <a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a>。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>模块</th>
+<th>Layer 1 相对 Layer 0</th>
+<th>需要记住的差别</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Attention 侧 mHC</td>
+<td>算法与 shape 相同，参数独立</td>
+<td>系数从 Engram 更新后的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">X&#39;</annotation></semantics></math> 预测；首次汇聚用动态 <code>pre_next</code></td>
+</tr>
+<tr class="even">
+<td>两个入口 RMSNorm</td>
+<td>相同结构，参数独立</td>
+<td>输入数值不同</td>
+</tr>
+<tr class="odd">
+<td>Local Attention / SWA</td>
+<td>相同结构，参数独立</td>
+<td>同为 128-token 窗口；没有 global KV、Compressor 或 Indexer</td>
+</tr>
+<tr class="even">
+<td>Attention 侧 <code>hc_post</code></td>
+<td>相同</td>
+<td>residual 是 Engram 更新后的四路张量</td>
+</tr>
+<tr class="odd">
+<td>MoE 侧 mHC</td>
+<td>相同结构，参数独立</td>
+<td>其 <code>ffn_pre</code> 传给 Layer 2</td>
+</tr>
+<tr class="even">
+<td>MoE FFN</td>
+<td>相同结构，参数独立</td>
+<td>仍是 Top-6 routed + 1 shared expert</td>
+</tr>
+<tr class="odd">
+<td>Local KV cache 与 RoPE 表</td>
+<td>相同 shape，各层独立</td>
+<td>不与 Layer 0 共用缓存或权重</td>
+</tr>
+</tbody>
+</table>
+<p>所以 Layer 1 可以概括为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mspace width="0.222em"></mspace><mn mathvariant="normal">1</mn></mrow><mo>=</mo><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mspace width="0.222em"></mspace><mn mathvariant="normal">0</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">基</mi><mi mathvariant="normal">准</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">B</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">k</mi></mrow><mo>+</mo><mrow><mi mathvariant="normal">前</mi><mi mathvariant="normal">置</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">E</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi></mrow><mo>+</mo><mrow><mi mathvariant="normal">动</mi><mi mathvariant="normal">态</mi><mi mathvariant="normal">跨</mi><mi mathvariant="normal">层</mi><mspace width="0.222em"></mspace><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+\mathrm{Layer\ 1}
+=\mathrm{Layer\ 0\ 基准\ Block}
++\mathrm{前置\ Engram}
++\mathrm{动态跨层\ pre}
+}
+</annotation></semantics></math></p>
+<p>这里的加号表示结构差异，不表示参数共享。</p>
+<h2 id="参数量与-gpu-驻留字节">7. 参数量与 GPU 驻留字节</h2>
+<h3 id="layer-1-engram-的逻辑参数量">7.1 Layer 1 Engram 的逻辑参数量</h3>
+<p>只统计可学习模型标量，FP8 scale 计入驻留字节、不重复算作逻辑模型参数：</p>
+<table>
+<thead>
+<tr class="header">
+<th>参数</th>
+<th>Shape</th>
+<th style="text-align: right;">逻辑参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>E</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></msub><annotation encoding="application/x-tex">E_{\mathrm{table}}</annotation></semantics></math></td>
+<td><code>[384006168,256]</code></td>
+<td style="text-align: right;">98,305,579,008</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>E</mi></msub><annotation encoding="application/x-tex">W_E</annotation></semantics></math></td>
+<td><code>[25600,6144]</code></td>
+<td style="text-align: right;">157,286,400</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>Q</mi></msub><annotation encoding="application/x-tex">W_Q</annotation></semantics></math></td>
+<td><code>[4,5120]</code></td>
+<td style="text-align: right;">20,480</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>K</mi></msub><annotation encoding="application/x-tex">W_K</annotation></semantics></math></td>
+<td><code>[4,5120]</code></td>
+<td style="text-align: right;">20,480</td>
+</tr>
+<tr class="odd">
+<td><strong>Engram 合计</strong></td>
+<td>—</td>
+<td style="text-align: right;"><strong>98,462,906,368</strong></td>
+</tr>
+</tbody>
+</table>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>P</mi><mrow><mi mathvariant="normal">E</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mn mathvariant="normal">1</mn></mrow></msub><mo>=</mo><mn>384006168</mn><mo>×</mo><mn>256</mn><mo>+</mo><mn>25600</mn><mo>×</mo><mn>6144</mn><mo>+</mo><mn>2</mn><mo>×</mo><mn>4</mn><mo>×</mo><mn>5120</mn><mo>=</mo><mn>98462906368</mn></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+P_{\mathrm{Engram1}}
+=384006168\times256
++25600\times6144
++2\times4\times5120
+=98462906368
+}
+</annotation></semantics></math></p>
+<p>技术报告中的“196B Engram”是 Layer 1 与 Layer 14 两个模块的模型级近似；这里给的是 Layer 1 单个模块按固定配置得到的精确逻辑参数量。</p>
+<h3 id="engram-的参考-gpu-权重存储">7.2 Engram 的参考 GPU 权重存储</h3>
+<p>固定 reference 中：</p>
+<ul>
+<li>Engram 表用 FP8 E4M3 数据，每 32 个元素配一个 E8M0 scale。</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>E</mi></msub><annotation encoding="application/x-tex">W_E</annotation></semantics></math> 用 FP8 E4M3 数据和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>32</mn><mo>×</mo><mn>32</mn></mrow><annotation encoding="application/x-tex">32\times32</annotation></semantics></math> block scale。</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>Q</mi></msub><mo>,</mo><msub><mi>W</mi><mi>K</mi></msub></mrow><annotation encoding="application/x-tex">W_Q,W_K</annotation></semantics></math> 用 BF16。</li>
+</ul>
+<p>因此：</p>
+<table>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th>FP8 / BF16 数据与 scale</th>
+<th style="text-align: right;">GPU 驻留字节</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Engram 表</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>384006168</mn><mo>×</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>256</mn><mo>+</mo><mn>8</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">384006168\times(256+8)</annotation></semantics></math></td>
+<td style="text-align: right;">101,377,628,352 B</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>W</mi><mi>E</mi></msub><annotation encoding="application/x-tex">W_E</annotation></semantics></math></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>25600</mn><mo>×</mo><mn>6144</mn><mo>+</mo><mn>800</mn><mo>×</mo><mn>192</mn></mrow><annotation encoding="application/x-tex">25600\times6144+800\times192</annotation></semantics></math></td>
+<td style="text-align: right;">157,440,000 B</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>Q</mi></msub><mo>,</mo><msub><mi>W</mi><mi>K</mi></msub></mrow><annotation encoding="application/x-tex">W_Q,W_K</annotation></semantics></math></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2</mn><mo>×</mo><mn>4</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2</mn></mrow><annotation encoding="application/x-tex">2\times4\times5120\times2</annotation></semantics></math></td>
+<td style="text-align: right;">81,920 B</td>
+</tr>
+<tr class="even">
+<td><strong>Engram 合计</strong></td>
+<td>—</td>
+<td style="text-align: right;"><strong>101,535,150,272 B</strong></td>
+</tr>
+</tbody>
+</table>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">E</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mn mathvariant="normal">1</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi></mrow></msub><mo>=</mo><mn>101535150272</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mo>≈</mo><mn>101.535</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">B</mi></mrow><mo>≈</mo><mn>94.562</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+M_{\mathrm{Engram1,param}}
+=101535150272\ \mathrm{Byte}
+\approx101.535\ \mathrm{GB}
+\approx94.562\ \mathrm{GiB}
+}
+</annotation></semantics></math></p>
+<h3 id="layer-1-整层参数汇总">7.3 Layer 1 整层参数汇总</h3>
+<p>Layer 1 的基准 Block 参数结构与 Layer 0 相同，再加本层 Engram：</p>
+<table>
+<colgroup>
+<col style="width: 27%" />
+<col style="width: 36%" />
+<col style="width: 36%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th style="text-align: right;">逻辑参数量</th>
+<th style="text-align: right;">GPU 驻留字节</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>基准 Block：两套 mHC、Norm、SWA、MoE</td>
+<td style="text-align: right;">13,754,511,990</td>
+<td style="text-align: right;">7,423,022,552 B</td>
+</tr>
+<tr class="even">
+<td>Layer 1 Engram</td>
+<td style="text-align: right;">98,462,906,368</td>
+<td style="text-align: right;">101,535,150,272 B</td>
+</tr>
+<tr class="odd">
+<td><strong>Layer 1 合计</strong></td>
+<td style="text-align: right;"><strong>112,217,418,358</strong></td>
+<td style="text-align: right;"><strong>108,958,172,824 B</strong></td>
+</tr>
+</tbody>
+</table>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>P</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">1</mn></mrow></msub><mo>=</mo><mn>112217418358</mn><mo>≈</mo><mn>112.217</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">B</mi></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{P_{\mathrm{Layer1}}=112217418358\approx112.217\ \mathrm{B}}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">1</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi></mrow></msub><mo>=</mo><mn>108958172824</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mo>≈</mo><mn>108.958</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">B</mi></mrow><mo>≈</mo><mn>101.475</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">G</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">B</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+M_{\mathrm{Layer1,param}}
+=108958172824\ \mathrm{Byte}
+\approx108.958\ \mathrm{GB}
+\approx101.475\ \mathrm{GiB}
+}
+</annotation></semantics></math></p>
+<p>Engram 占 Layer 1 逻辑参数的约 <strong>87.74%</strong>，占参考权重驻留字节的约 <strong>93.19%</strong>。这不表示生产部署必须把 101.5 GB Engram 全放在单张 GPU：官方报告明确采用确定性地址进行预取，参考实现也支持按行跨 <code>world_size</code> 分片，并在查表后合并结果。本节的单卡完整驻留值是便于核算的 <code>world_size=1</code> 基准，不是部署建议。</p>
+<h2 id="前向计算量">8. 前向计算量</h2>
+<h3 id="统计口径">8.1 统计口径</h3>
+<p>沿用 Layer 0：统计数学前向的标量加、减、乘，每次计 1；<code>XOR</code>、整数取模、逻辑 Lookup、<code>rsqrt</code>、<code>sqrt</code>、<code>exp</code>、除法和比较单列。忽略量化/反量化、类型转换、通信、reshape、数据搬运和具体 kernel 融合。</p>
+<p>Hash 在官方 reference 中同时生成 Layer 1、14 的地址。为了与“本层增量”一致，主表只归因 Layer 1 的一个 Hash slice；完整 Hash 前置调用的整数操作量在表后单独说明。</p>
+<h3 id="engram-每-token-的算法级运算">8.2 Engram 每 token 的算法级运算</h3>
+<table>
+<thead>
+<tr class="header">
+<th>阶段</th>
+<th style="text-align: right;">Layer 1 每 token 的加 / 减 / 乘</th>
+<th>其他运算</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>压缩 Token ID</td>
+<td style="text-align: right;">0</td>
+<td>逻辑 Lookup：1</td>
+</tr>
+<tr class="even">
+<td>四个回看位置乘 Hash 乘数</td>
+<td style="text-align: right;">4</td>
+<td>XOR：3</td>
+</tr>
+<tr class="odd">
+<td>24 个桶取模并加 offset</td>
+<td style="text-align: right;">24</td>
+<td>整数取模：24</td>
+</tr>
+<tr class="even">
+<td>24 行 Engram 查表</td>
+<td style="text-align: right;">0</td>
+<td>逻辑行 Lookup：24</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>6144</mn><mo>→</mo><mn>25600</mn></mrow><annotation encoding="application/x-tex">6144\rightarrow25600</annotation></semantics></math> 投影</td>
+<td style="text-align: right;">314,547,200</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>,</mo><msub><mi>K</mi><mi>E</mi></msub></mrow><annotation encoding="application/x-tex">X,K_E</annotation></semantics></math> 的八个 RMS 因子</td>
+<td style="text-align: right;">81,928</td>
+<td><code>rsqrt</code>：8</td>
+</tr>
+<tr class="odd">
+<td>四路加权点积与归一化缩放</td>
+<td style="text-align: right;">61,448</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>Signed Sqrt 与 Sigmoid</td>
+<td style="text-align: right;">8</td>
+<td><code>sqrt</code>：4；<code>exp</code>：4；除法：4；比较：4</td>
+</tr>
+<tr class="odd">
+<td>四路 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><msub><mi>V</mi><mi>E</mi></msub></mrow><annotation encoding="application/x-tex">gV_E</annotation></semantics></math> 写回</td>
+<td style="text-align: right;">40,960</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><strong>合计</strong></td>
+<td style="text-align: right;"><strong>314,731,572</strong></td>
+<td>见上</td>
+</tr>
+</tbody>
+</table>
+<p>其中最大项来自：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>25600</mn><mo>×</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>6144</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">t</mi></mrow><mo>+</mo><mn>6143</mn><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>314547200</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+25600\times(6144\ \mathrm{mult}+6143\ \mathrm{add})
+=314547200.
+</annotation></semantics></math></p>
+<p>此外，参考实现每次 Engram 调用都会计算一次：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi><mo>=</mo><msub><mi>W</mi><mi>Q</mi></msub><mo>⊙</mo><msub><mi>W</mi><mi>K</mi></msub><mo>,</mo></mrow><annotation encoding="application/x-tex">
+W=W_Q\odot W_K,
+</annotation></semantics></math></p>
+<p>产生 20,480 次逐元素乘法。若部署实现预先合并这两个只以乘积形式使用的静态权重，可省去这项。</p>
+<p>所以处理 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math> 个 token 时：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">E</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mn mathvariant="normal">1</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>=</mo><mn>314731572</mn><mi>N</mi><mo>+</mo><mn>20480</mn></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+C_{\mathrm{Engram1,mul/add/sub}}
+=314731572N+20480
+}
+</annotation></semantics></math></p>
+<p>另有：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>3</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">X</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">R</mi></mrow><mo>,</mo><mspace width="1.0em"></mspace><mn>24</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">整</mi><mi mathvariant="normal">数</mi><mi mathvariant="normal">取</mi><mi mathvariant="normal">模</mi></mrow><mo>,</mo><mspace width="1.0em"></mspace><mn>25</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">逻</mi><mi mathvariant="normal">辑</mi><mi mathvariant="normal">L</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+3N\ \mathrm{XOR},\quad24N\ \mathrm{整数取模},\quad25N\ \mathrm{逻辑Lookup},
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>8</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">t</mi></mrow><mo>,</mo><mspace width="1.0em"></mspace><mn>4</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">t</mi></mrow><mo>,</mo><mspace width="1.0em"></mspace><mn>4</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">p</mi></mrow><mo>,</mo><mspace width="1.0em"></mspace><mn>4</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">除</mi><mi mathvariant="normal">法</mi></mrow><mo>,</mo><mspace width="1.0em"></mspace><mn>4</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">比</mi><mi mathvariant="normal">较</mi></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+8N\ \mathrm{rsqrt},\quad4N\ \mathrm{sqrt},\quad4N\ \mathrm{exp},
+\quad4N\ \mathrm{除法},\quad4N\ \mathrm{clamp比较}.
+</annotation></semantics></math></p>
+<p>这里把 Sigmoid 按 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>+</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>x</mi></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">1/(1+e^{-x})</annotation></semantics></math> 展开计数；实际数值稳定 kernel 的指令数可能不同。Mask、边界检查、历史 gather 和布尔选择随输入情况变化，没有混入主公式。</p>
+<p>完整 <code>NgramHashState.forward</code> 一次会同时计算 Layer 1 和 Layer 14，所以参考调用的 Hash 主体为每 token <strong>8 次整数乘法、6 次 XOR、48 次取模和 48 次 offset 加法</strong>，但 Token 压缩映射仍只做一次。本文把其中一半 Hash 主体归因给 Layer 1；分析 Layer 14 时不能再次计入共享 Token 映射和缓存。</p>
+<h3 id="layer-1-整层计算量">8.3 Layer 1 整层计算量</h3>
+<p>Layer 0 的官方通用路径为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">0</mn></mrow></msub><mo>=</mo><mi>N</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>755138906</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+C_{\mathrm{Layer0}}
+=N\left(755138906+131200\overline L\right),
+</annotation></semantics></math></p>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>L</mi><mo accent="true">¯</mo></mover><annotation encoding="application/x-tex">\overline L</annotation></semantics></math> 是每个查询实际参与 SWA 评分的平均局部历史长度，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>≤</mo><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>≤</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">1\le\overline L\le128</annotation></semantics></math>。Layer 1 后半段使用同一通用路径；它的首次 <code>hc_pre</code> 是动态系数，不能做 Layer 0 identity-pre 的理论常量折叠。</p>
+<p>加上 Engram：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">1</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">/</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">b</mi></mrow></msub><mo>=</mo><mi>N</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1069870478</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><mn>20480</mn></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+C_{\mathrm{Layer1,mul/add/sub}}
+=N\left(1069870478+131200\overline L\right)+20480
+}
+</annotation></semantics></math></p>
+<p>在暂不考虑 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>L</mi><mo accent="true">¯</mo></mover><annotation encoding="application/x-tex">\overline L</annotation></semantics></math> 的固定部分时，Engram 使本层每 token 的加/减/乘主项比 Layer 0 reference 增加约 <strong>41.68%</strong>。这个比例不是实际延迟比例：Engram 表可预取和分片，FP8 GEMM、访存、通信、并发重叠与 kernel 融合都会改变硬件时间。<a href="https://arxiv.org/abs/2609.19969">官方报告的 Engram 预取说明</a></p>
+<h2 id="required-global-memory-理论下界与状态">9. Required Global Memory 理论下界与状态</h2>
+<p>这一节给出固定 reference 的<strong>共享状态视角</strong>：参数和 scale、层边界 I/O、本层 local Attention 状态、模型级 Hash 固定 buffer、Token 历史 cache，以及同时服务 Layer 1 和 Layer 14 的完整 <code>engram_hashes</code>。内部 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>,</mo><mi>F</mi><mo>,</mo><msub><mi>K</mi><mi>E</mi></msub><mo>,</mo><msub><mi>V</mi><mi>E</mi></msub><mo>,</mo><mi>D</mi><mo>,</mo><mi>g</mi></mrow><annotation encoding="application/x-tex">E_{\mathrm{flat}},F,K_E,V_E,D,g</annotation></semantics></math> 假设可通过融合、分块或工作区复用，不要求全部同时写入 Global Memory。</p>
+<h3 id="边界-io-与持久状态">9.1 边界 I/O 与持久状态</h3>
+<p>Layer 1 输入和输出均包含四路 BF16 残差与一份 FP32 pre：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">y</mi></mrow></msub><mo>=</mo><mn>2</mn><mo>×</mo><mi>N</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>4</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2</mn><mo>+</mo><mn>4</mn><mo>×</mo><mn>4</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>81952</mn><mi>N</mi><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{boundary}}
+=2\times N(4\times5120\times2+4\times4)
+=81952N\ \mathrm{Byte}.
+</annotation></semantics></math></p>
+<p>本层 Attention 状态与 Layer 0 相同：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">w</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">v</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><mn>128</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">F</mi><mn mathvariant="normal">16</mn></mrow><mo>=</mo><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+\mathrm{window\_kv\_cache}:[B_{\max},128,512]\ \mathrm{BF16}
+=131072B_{\max}\ \mathrm{Byte},
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">s</mi></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>S</mi><mo>max</mo></msub><mo>,</mo><mn>32</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mn mathvariant="normal">64</mn></mrow><mo>=</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\mathrm{freqs\_cis}:[S_{\max},32]\ \mathrm{Complex64}
+=256S_{\max}\ \mathrm{Byte}.
+</annotation></semantics></math></p>
+<p>模型级 Hash 前置组件持有：</p>
+<table>
+<thead>
+<tr class="header">
+<th>对象</th>
+<th>Shape / dtype</th>
+<th style="text-align: right;">字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Token 压缩映射</td>
+<td><code>[129280]</code> INT64</td>
+<td style="text-align: right;">1,034,240</td>
+</tr>
+<tr class="even">
+<td>两层 Hash 乘数</td>
+<td><code>[2,4]</code> INT64</td>
+<td style="text-align: right;">64</td>
+</tr>
+<tr class="odd">
+<td>两层质数模数</td>
+<td><code>[2,3,8]</code> INT64</td>
+<td style="text-align: right;">384</td>
+</tr>
+<tr class="even">
+<td>两层 offset</td>
+<td><code>[2,24]</code> INT64</td>
+<td style="text-align: right;">384</td>
+</tr>
+<tr class="odd">
+<td>压缩 Token 历史 cache</td>
+<td><code>[B_max,S_max]</code> INT64</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>8</mn><msub><mi>B</mi><mo>max</mo></msub><msub><mi>S</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">8B_{\max}S_{\max}</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>本次完整 Hash 输出</td>
+<td><code>[B,S,2,24]</code> INT64</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>384</mn><mi>N</mi></mrow><annotation encoding="application/x-tex">384N</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>前四项合计 1,035,072 Byte。<code>engram_hashes</code> 在进入 Layer 0 前生成，并至少保留到 Layer 14 消费完成；Layer 1 使用的 <code>[B,S,24]</code> 只是视图，不再分配 192N Byte。</p>
+<h3 id="汇总公式">9.2 汇总公式</h3>
+<p>纯文本路径没有 <code>engram_mask</code>，于是：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><mtable><mtr><mtd columnalign="right" style="text-align: right"><msub><mi>M</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">1</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mrow></mrow></mtd><mtd columnalign="left" style="text-align: left"><mn>108958172824</mn><mo>+</mo><mn>81952</mn><mi>N</mi><mo>+</mo><mn>384</mn><mi>N</mi></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub><mo>+</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>1035072</mn><mo>+</mo><mn>8</mn><msub><mi>B</mi><mo>max</mo></msub><msub><mi>S</mi><mo>max</mo></msub></mtd></mtr></mtable><mspace width="1.0em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+\begin{aligned}
+M_{\mathrm{Layer1,min}}={}&amp;108958172824
++81952N
++384N\\
+&amp;+131072B_{\max}
++256S_{\max}\\
+&amp;+1035072
++8B_{\max}S_{\max}
+\end{aligned}
+\quad\mathrm{Byte}
+}
+</annotation></semantics></math></p>
+<p>整理为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">1</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mn>108959207896</mn><mo>+</mo><mn>82336</mn><mi>N</mi><mo>+</mo><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub><mo>+</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub><mo>+</mo><mn>8</mn><msub><mi>B</mi><mo>max</mo></msub><msub><mi>S</mi><mo>max</mo></msub><mspace width="1.0em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+M_{\mathrm{Layer1,min}}
+=108959207896
++82336N
++131072B_{\max}
++256S_{\max}
++8B_{\max}S_{\max}
+\quad\mathrm{Byte}
+}
+</annotation></semantics></math></p>
+<p>多模态路径若把新生成的 BOOL <code>engram_mask:[B,S]</code> 独立计入，再加 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math> Byte。上式把整份 Hash 固定 buffer、Token cache 和 <code>[B,S,2,24]</code> Hash 输出计了一次；它们是 Layer 1 与 Layer 14 共享的模型级资源，做整模型汇总时不能再次相加。</p>
+<p>这仍不是进程峰值显存，也不是显存读写量：未融合激活、FP8 解量化临时值、GEMM workspace、allocator 保留区、分片通信 buffer 以及实际推理引擎的 Engram CPU / host-memory offload 都会改变测量结果。</p>
+<h2 id="layer-1-的跨层输出与结论">10. Layer 1 的跨层输出与结论</h2>
+<p>Layer 1 最终输出：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>对象</th>
+<th>Shape</th>
+<th>dtype</th>
+<th>去向 / 生命周期</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>四路残差 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">X^{(1)}_{\mathrm{out}}</annotation></semantics></math></td>
+<td><code>[B,S,4,5120]</code></td>
+<td>BF16</td>
+<td>Layer 2 Attention 侧 mHC</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msubsup><annotation encoding="application/x-tex">p^{(1)}_{\mathrm{next}}</annotation></semantics></math></td>
+<td><code>[B,S,4]</code></td>
+<td>FP32</td>
+<td>Layer 2 第一次 <code>hc_pre</code></td>
+</tr>
+<tr class="odd">
+<td><code>window_kv_cache</code></td>
+<td><code>[B_max,128,512]</code></td>
+<td>BF16</td>
+<td>Layer 1 后续 Decode 的 128-token 环形窗口</td>
+</tr>
+<tr class="even">
+<td>Token Hash cache</td>
+<td><code>[B_max,S_max]</code></td>
+<td>INT64</td>
+<td>Layer 1、14 共用的跨 Prefill / Decode 压缩 Token 历史</td>
+</tr>
+<tr class="odd">
+<td><code>engram_hashes</code></td>
+<td><code>[B,S,2,24]</code></td>
+<td>INT64</td>
+<td>本次前向中供 Layer 1、14 依次消费</td>
+</tr>
+</tbody>
+</table>
+<p>核心结论只有三条：</p>
+<ol type="1">
+<li><strong>Layer 1 是 Layer 0 基准 Block 的第一次结构扩展。</strong> 新增 Engram，但 Attention 仍是纯 128-token SWA，MoE 与 mHC 主体不变。</li>
+<li><strong>Engram 向四路写入共享 Value、独立 Gate。</strong> 它更新四路残差，却不改动 Layer 0 传来的动态 <code>pre_next</code>。</li>
+<li><strong>本层容量主要由条件记忆决定。</strong> 单个 Engram 带来 98.463B 逻辑参数和约 94.562 GiB 的 <code>world_size=1</code> 参考权重驻留；实际部署依赖行分片、预取或 host-memory offload，而不是把它理解成必须单卡常驻的普通线性层。</li>
+</ol>
+<h2 id="资料来源与版本说明">11. 资料来源与版本说明</h2>
+<ul>
+<li><a href="https://arxiv.org/abs/2609.19969">DeepSeek-V4.1-Flash 技术报告</a>：模型总体结构、两处 Engram、196B 总容量、Hash head 与部署预取。</li>
+<li><a href="https://arxiv.org/abs/2601.07372">Engram 原始论文</a>：条件记忆、Tokenizer Compression、Multi-Head Hashing 与 Context-aware Gating。</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">固定 revision 的配置</a>：Layer 1、Engram、SWA、MoE 的精确尺寸。</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py">固定 revision 的 Hash 实现</a>：Token 压缩、历史 cache、Hash 乘数、质数桶与 offset。</li>
+<li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py">固定 revision 的模型前向</a>：Engram 表、KV 投影、Gate、Block 与跨层 <code>pre_mix</code>。</li>
+</ul>
+<p>全文于 2026-10-20 对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 重新核算。参数量、计算量和 Required Global Memory 使用本文声明的逻辑口径；官方报告中的模型级近似、参考实现的张量分配和具体部署引擎的测量值不混为同一数字。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-20<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/03-layer1.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

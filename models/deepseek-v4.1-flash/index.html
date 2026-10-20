@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DeepSeek-V4.1-Flash 图解系列 · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css"></head>
 <body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
-<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
-<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="deepseek-v4.1-flash-图解系列">DeepSeek-V4.1-Flash 图解系列</h1>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="deepseek-v4.1-flash-图解系列">DeepSeek-V4.1-Flash 图解系列</h1>
 <p>本系列研究 <strong>DeepSeek-V4.1-Flash</strong> 的结构、数学计算与推理状态。以 Layer 0 为基准层，逐步理解其他层的差异和特殊模块，最后串起完整推理与成本分析。其他变体的配置和层分类不直接沿用。</p>
-<p>当前规划为 <strong>约六篇技术正文＋一个系列目录页</strong>。目前第②篇已发布，其余五篇尚未开始正文；它们是阅读规划，不表示内容已经完成。篇目可随后续讨论调整，过长章节必要时再拆分。</p>
+<p>当前规划为 <strong>约六篇技术正文＋一个系列目录页</strong>。目前第②篇与第③篇已发布，其余篇目仍是阅读规划，不表示内容已经完成。篇目可随后续讨论调整，过长章节必要时再拆分。</p>
 <h2 id="阅读顺序与完成状态">阅读顺序与完成状态</h2>
 <table>
 <colgroup>
@@ -35,10 +35,10 @@
 <td>已发布，含十二张配图；持续修订</td>
 </tr>
 <tr class="odd">
-<td>③ 其他层的差异</td>
-<td>相对 Layer 0 的新增、删除、变化与复用；标清完整流程中的位置与接口</td>
-<td>①、②</td>
-<td>规划中，正文尚未开始</td>
+<td><a href="03-layer1.html">③ Layer 1：从 Engram 写入到局部注意力与 MoE</a></td>
+<td>以 Layer 0 为基准，只展开前置 Engram、动态跨层 <code>pre_next</code>、增量参数、计算与状态</td>
+<td>②</td>
+<td>已发布，含两张配图</td>
 </tr>
 <tr class="even">
 <td>④ 特殊模块详解</td>
@@ -60,9 +60,9 @@
 </tr>
 </tbody>
 </table>
-<p>目前可直接从第②篇开始阅读。尚未写成正文的篇目不提供空链接，也不发布占位页面。第③篇复用基准层已经讲清的模块；第④篇讲特殊模块内部算法；实际字节数、性能和硬件执行集中到第⑥篇。</p>
+<p>目前可直接从第②篇开始阅读，再用第③篇观察 Layer 1 如何在基准层上增加 Engram。尚未写成正文的篇目不提供空链接，也不发布占位页面。第③篇复用基准层已经讲清的模块；第④篇继续容纳其他特殊模块；整模型级的存储、性能和硬件执行仍集中到第⑥篇。</p>
 <h2 id="版本与资料依据">版本与资料依据</h2>
-<p>官方资料入口：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">deepseek-ai/DeepSeek-V4.1-Flash</a>。Layer 0 全文已于 2026-10-14 统一对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 复核；各图的标注勘误和限定仍以相邻正文及 <code>figures.json</code> 为准。</p>
+<p>官方资料入口：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">deepseek-ai/DeepSeek-V4.1-Flash</a>。Layer 0 全文于 2026-10-14、Layer 1 全文于 2026-10-20 对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 复核；各图的标注勘误和限定仍以相邻正文及 <code>figures.json</code> 为准。</p>
 <h2 id="共用符号">共用符号</h2>
 <table>
 <thead>
@@ -95,6 +95,6 @@
 </tbody>
 </table>
 <p>完整序列示例明确 <code>S_his=S</code>；带历史缓存的场景另行声明。可学习权重、运行时系数和固定常数分别说明。</p>
-<h2 id="第②篇的配图进度">第②篇的配图进度</h2>
-<p>现有十二张图全部属于 Layer 0：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张、RMSNorm 一张、SWA 三张，以及 MoE 的 Router、专家参数逻辑索引、专家计算三张。MoE 专家计算图采用版已把交付图中两处 <code>min(G,0)</code> 勘误为官方实现的 <code>min(G,10)</code>。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-14<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+<h2 id="已发布文章的配图进度">已发布文章的配图进度</h2>
+<p>Layer 0 使用十二张图：整层八模块一张、mHC 系数生成两张、<code>hc_pre</code> 汇聚一张、<code>hc_post</code> 融合一张、RMSNorm 一张、SWA 三张，以及 MoE 的 Router、专家参数逻辑索引、专家计算三张。Layer 1 新增两张 Engram 图，分别说明 Hash 查表和四路门控写回；图中简写与 mask 位置的限定以相邻正文为准。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-20<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/index.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
