@@ -7,6 +7,7 @@
     "hardware/nvidia-tma/references.md",
     "models/deepseek-v4.1-flash/index.md",
     "models/deepseek-v4.1-flash/02-layer0.md",
+    "models/deepseek-v4.1-flash/03-layer1.md",
     "legacy/index.md"
   ],
   "preview": [
@@ -17,6 +18,7 @@
     "hardware/nvidia-tma/references.md",
     "models/deepseek-v4.1-flash/index.md",
     "models/deepseek-v4.1-flash/02-layer0.md",
+    "models/deepseek-v4.1-flash/03-layer1.md",
     "legacy/index.md"
   ]
 }

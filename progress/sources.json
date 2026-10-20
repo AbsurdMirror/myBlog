@@ -1,9 +1,9 @@
 {
-  "checked_at": "2026-10-14",
+  "checked_at": "2026-10-20",
   "model": "deepseek-ai/DeepSeek-V4.1-Flash",
   "pinned_revision": "5254448103b6254fc646dacbca1cbbf20e9216c1",
   "revision_content_verified": true,
-  "verification_scope": "Full Layer 0 article verified against the pinned revision: config, RMSNorm, Hyper-Connections, local attention and sparse_attn kernel, Gate, Expert, MoE, quantized Linear storage, Transformer initialization, runtime buffers, and whole-layer arithmetic",
+  "verification_scope": "Full Layer 0 and Layer 1 articles verified against the pinned revision: config, RMSNorm, Hyper-Connections, local attention and sparse_attn kernel, Gate, Expert, MoE, Engram token compression and hashing, Engram lookup/gating, quantized Linear and embedding storage, Transformer initialization, runtime buffers, and whole-layer arithmetic",
   "sources": [
     {
       "path": "inference/config.json",
@@ -12,6 +12,10 @@
     {
       "path": "inference/model.py",
       "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py"
+    },
+    {
+      "path": "inference/engram.py",
+      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/raw/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/engram.py"
     },
     {
       "path": "inference/kernel.py",

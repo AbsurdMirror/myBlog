@@ -61,6 +61,21 @@ def main():
     mhc_parameter_bytes=2*(24*20480+24+3)*4
     layer_parameter_bytes=(mhc_parameter_bytes+2*rmsnorm_param_bytes
                            +160264704+moe_parameter_bytes)
+    engram_rows=384006168
+    engram_embed_params=engram_rows*256
+    engram_wkv_params=25600*6144
+    engram_qk_params=2*4*5120
+    engram_params=engram_embed_params+engram_wkv_params+engram_qk_params
+    engram_embed_bytes=engram_embed_params+engram_rows*(256//32)
+    engram_wkv_bytes=engram_wkv_params+(25600//32)*(6144//32)
+    engram_qk_bytes=engram_qk_params*2
+    engram_parameter_bytes=engram_embed_bytes+engram_wkv_bytes+engram_qk_bytes
+    engram_wkv_ops=25600*(6144+6143)
+    engram_ops_per_token=(engram_wkv_ops+81928+61448+8+40960+4+24)
+    layer1_params=2*mhc+2*5120+swa+moe+engram_params
+    layer1_parameter_bytes=layer_parameter_bytes+engram_parameter_bytes
+    layer1_reference_ops=layer_reference_ops+engram_ops_per_token
+    engram_hash_shared_fixed=129280*8+2*4*8+2*3*8*8+2*24*8
     assert (rmsnorm,2*rmsnorm_params,rmsnorm_param_bytes)==(20481,10240,10240)
     assert (mhc,swa,moe)==(491547,126617408,13626901248)
     assert (moe_routed_expert,moe_shared_expert,moe_scalar_ops)==(70780672,70778368,499425676)
@@ -70,6 +85,11 @@ def main():
     assert (mhc_parameter_bytes,layer_parameter_bytes)==(3932376,7423022552)
     assert 2*(4*5120*2+4*4)==81952
     assert 2*mhc+2*5120+swa+moe==13754511990
+    assert (engram_params,engram_parameter_bytes)==(98462906368,101535150272)
+    assert (engram_wkv_ops,engram_ops_per_token)==(314547200,314731572)
+    assert (layer1_params,layer1_parameter_bytes)==(112217418358,108958172824)
+    assert layer1_reference_ops==1069870478
+    assert engram_hash_shared_fixed==1035072
     if errors: raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(pages)} pages, relative resources, original hashes, arithmetic ({mode}).')
 
