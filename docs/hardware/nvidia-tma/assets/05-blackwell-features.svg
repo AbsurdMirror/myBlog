@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:24px;font-weight:700}.b{font-size:19px}.s{font-size:16px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.thin{stroke:#71878b;stroke-width:2;fill:none}.dash{stroke-dasharray:11 9}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="68" class="t">Blackwell：TMA 接口沿三条轴线扩展</text>
+
+<rect x="55" y="110" width="480" height="650" class="box blue"/>
+<text x="295" y="155" class="h" text-anchor="middle">① 目的路径与 CTA 拓扑</text>
+<rect x="90" y="200" width="410" height="125" class="box green"/>
+<text x="295" y="238" class="h" text-anchor="middle">global → shared::cta</text>
+<text x="295" y="275" class="b" text-anchor="middle">严格投递到发起 CTA 的本地 SMEM</text>
+<text x="295" y="302" class="s" text-anchor="middle">PTX 8.6 新增显式本地目的形式</text>
+<path d="M295 325 L295 375" class="line"/><path d="M283 361 L295 375 L307 361" class="line"/>
+<rect x="90" y="375" width="410" height="130" class="box pink"/>
+<text x="295" y="413" class="h" text-anchor="middle">global → shared::cluster</text>
+<text x="295" y="450" class="b" text-anchor="middle">cluster/remote 投递与 multicast</text>
+<text x="295" y="480" class="s" text-anchor="middle">沿用 cluster DSMEM 路径</text>
+<rect x="90" y="555" width="185" height="115" class="box orange"/>
+<text x="182" y="598" class="h" text-anchor="middle">cta_group::1</text>
+<text x="182" y="635" class="s" text-anchor="middle">单 CTA group</text>
+<rect x="315" y="555" width="185" height="115" class="box purple"/>
+<text x="407" y="598" class="h" text-anchor="middle">cta_group::2</text>
+<text x="407" y="635" class="s" text-anchor="middle">双 CTA group</text>
+<text x="295" y="715" class="b" text-anchor="middle">表达投递拓扑与 mbarrier 路由</text>
+
+<rect x="560" y="110" width="620" height="650" class="box green"/>
+<text x="870" y="155" class="h" text-anchor="middle">② 访问模式与数据操作</text>
+<rect x="600" y="200" width="540" height="130" class="box pink"/>
+<text x="630" y="238" class="h">选择性写回：.cp_mask + byteMask</text>
+<g stroke="#425b61" stroke-width="2">
+<rect x="635" y="270" width="45" height="28" fill="#e4f3df"/><rect x="680" y="270" width="45" height="28" fill="#fffdf7"/><rect x="725" y="270" width="45" height="28" fill="#e4f3df"/><rect x="770" y="270" width="45" height="28" fill="#fffdf7"/><rect x="815" y="270" width="45" height="28" fill="#e4f3df"/><rect x="860" y="270" width="45" height="28" fill="#fffdf7"/><rect x="905" y="270" width="45" height="28" fill="#e4f3df"/><rect x="950" y="270" width="45" height="28" fill="#fffdf7"/>
+</g>
+<text x="870" y="319" class="s" text-anchor="middle">按每个 16B chunk 的字节位选择 store</text>
+
+<rect x="600" y="370" width="540" height="170" class="box orange"/>
+<text x="630" y="408" class="h">非连续二维行：gather4 / scatter4</text>
+<g stroke="#425b61" stroke-width="2">
+<rect x="640" y="445" width="185" height="20" fill="#dff1f5"/><rect x="640" y="475" width="185" height="20" fill="#f7e2e4"/><rect x="640" y="505" width="185" height="20" fill="#dff1f5"/>
+<path d="M665 455 L665 515 M705 455 L705 515 M745 455 L745 515 M785 455 L785 515" class="thin dash"/>
+</g>
+<text x="860" y="458" class="b">gather4：global → shared / prefetch</text>
+<text x="860" y="495" class="b">scatter4：shared → global</text>
+<text x="860" y="523" class="s">一次描述四条非连续行</text>
+
+<rect x="600" y="580" width="540" height="120" class="box purple"/>
+<text x="630" y="620" class="h">卷积窗口：im2col::w / im2col::w::128</text>
+<text x="630" y="660" class="b">扩展 tensor copy 与 prefetch 的窗口访问表达</text>
+<text x="630" y="687" class="s">在既有 im2col 基础上加入新的 W 维窗口形式</text>
+
+<rect x="1205" y="110" width="340" height="650" class="box orange"/>
+<text x="1375" y="155" class="h" text-anchor="middle">③ 描述与 target 体系</text>
+<rect x="1240" y="205" width="270" height="170" class="box purple"/>
+<text x="1375" y="245" class="h" text-anchor="middle">Swizzle atomicity</text>
+<text x="1375" y="285" class="b" text-anchor="middle">Tensor Map 增加</text>
+<text x="1375" y="318" class="b" text-anchor="middle">新的 swizzle 原子粒度</text>
+<text x="1375" y="350" class="s" text-anchor="middle">属于布局描述能力</text>
+<path d="M1375 375 L1375 440" class="line dash"/><path d="M1363 426 L1375 440 L1387 426" class="line"/>
+<rect x="1240" y="440" width="270" height="225" class="box blue"/>
+<text x="1375" y="480" class="h" text-anchor="middle">Family-specific target</text>
+<text x="1375" y="518" class="b" text-anchor="middle">PTX 8.8</text>
+<text x="1375" y="555" class="s" text-anchor="middle">同一 GPU family 内</text>
+<text x="1375" y="583" class="s" text-anchor="middle">跨多个 CC 共享特性</text>
+<text x="1375" y="620" class="s" text-anchor="middle">决定变体开放范围</text>
+<text x="1375" y="647" class="s" text-anchor="middle">不属于数据操作本身</text>
+<text x="1375" y="720" class="b" text-anchor="middle">布局能力与目标表达分开</text>
+
+<rect x="180" y="805" width="1240" height="62" class="box"/>
+<text x="800" y="844" class="h" text-anchor="middle">Blackwell 增量 = 路径与拓扑分化 + 访问模式扩展 + 描述/target 体系演进</text>
+</svg>

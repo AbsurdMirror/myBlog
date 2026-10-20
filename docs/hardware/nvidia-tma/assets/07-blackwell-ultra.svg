@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:25px;font-weight:700}.b{font-size:20px}.s{font-size:18px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:12 10}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="70" class="t">Blackwell Ultra：已知的产品映射与尚待验证的 TMA 差异</text>
+<rect x="100" y="145" width="380" height="190" class="box orange"/>
+<text x="290" y="195" class="h" text-anchor="middle">产品节点</text><text x="290" y="250" class="h" text-anchor="middle">B300 / GB300</text><text x="290" y="295" class="b" text-anchor="middle">Blackwell Ultra</text>
+<path d="M480 240 L610 240" class="line"/><path d="M596 228 L610 240 L596 252" class="line"/>
+<rect x="610" y="145" width="380" height="190" class="box blue"/>
+<text x="800" y="195" class="h" text-anchor="middle">官方产品表映射</text><text x="800" y="255" class="h" text-anchor="middle">Compute Capability 10.3</text><text x="800" y="295" class="b" text-anchor="middle">归入 Blackwell target 范围</text>
+<path d="M990 240 L1120 240" class="line"/><path d="M1106 228 L1120 240 L1106 252" class="line"/>
+<rect x="1120" y="145" width="380" height="190" class="box pink"/>
+<text x="1310" y="195" class="h" text-anchor="middle">公开接口资料</text><text x="1310" y="250" class="h" text-anchor="middle">未列出专属 TMA 增量</text><text x="1310" y="295" class="b" text-anchor="middle">不能据产品名推断新指令</text>
+<rect x="100" y="420" width="1400" height="105" class="box green"/>
+<text x="800" y="462" class="h" text-anchor="middle">本章分类：Blackwell 功能阶段中的“产品与 target 扩展”</text>
+<text x="800" y="500" class="b" text-anchor="middle">这是一项证据边界，不是“B300/GB300 与 B200 实现完全相同”的结论</text>
+<path d="M800 525 L800 600" class="line"/><path d="M788 586 L800 600 L812 586" class="line"/>
+<text x="800" y="640" class="h" text-anchor="middle">后续需要三类证据识别实现与性能差异</text>
+<rect x="145" y="680" width="380" height="120" class="box blue"/>
+<text x="335" y="728" class="h" text-anchor="middle">PTX target</text><text x="335" y="770" class="b" text-anchor="middle">变体、限定条件、可用特性</text>
+<rect x="610" y="680" width="380" height="120" class="box orange"/>
+<text x="800" y="728" class="h" text-anchor="middle">SASS</text><text x="800" y="770" class="b" text-anchor="middle">实际指令编码与调度行为</text>
+<rect x="1075" y="680" width="380" height="120" class="box pink"/>
+<text x="1265" y="728" class="h" text-anchor="middle">实测</text><text x="1265" y="770" class="b" text-anchor="middle">延迟、吞吐、并发与形状</text>
+</svg>

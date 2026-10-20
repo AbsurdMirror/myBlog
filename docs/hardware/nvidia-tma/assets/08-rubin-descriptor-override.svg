@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:24px;font-weight:700}.b{font-size:19px}.s{font-size:17px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:12 10}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="70" class="t">Rubin：Descriptor 从固定对象变成可运行时覆盖的模板</text>
+<text x="395" y="125" class="h" text-anchor="middle">此前：每个不同内存对象维护 / 修改 descriptor</text>
+<rect x="70" y="160" width="210" height="110" class="box pink"/><text x="175" y="205" class="b" text-anchor="middle">Expert 0</text><text x="175" y="240" class="s" text-anchor="middle">Descriptor 0</text>
+<rect x="290" y="160" width="210" height="110" class="box pink"/><text x="395" y="205" class="b" text-anchor="middle">Expert 1</text><text x="395" y="240" class="s" text-anchor="middle">Descriptor 1</text>
+<rect x="510" y="160" width="210" height="110" class="box pink"/><text x="615" y="205" class="b" text-anchor="middle">Expert N</text><text x="615" y="240" class="s" text-anchor="middle">Descriptor N</text>
+<path d="M800 115 L800 785" class="line dash"/>
+<text x="1195" y="125" class="h" text-anchor="middle">Rubin / PTX 9.4：共享布局模板，提交时覆盖关键字段</text>
+<rect x="910" y="160" width="570" height="150" class="box blue"/>
+<text x="1195" y="203" class="h" text-anchor="middle">共享 Tensor Map 模板</text>
+<text x="945" y="248" class="b">保留相同布局：element type · rank · swizzle · OOB …</text>
+<text x="945" y="282" class="s">适用于布局相同、内存位置不同的张量</text>
+<path d="M1195 310 L1195 370" class="line"/><path d="M1183 356 L1195 370 L1207 356" class="line"/>
+<rect x="900" y="370" width="590" height="180" class="box orange"/>
+<text x="1195" y="412" class="h" text-anchor="middle">TMA 指令提交时 inline descriptor update</text>
+<rect x="935" y="450" width="250" height="62" class="box green"/><text x="1060" y="489" class="b" text-anchor="middle">override::global_address</text>
+<rect x="1210" y="450" width="245" height="62" class="box green"/><text x="1332" y="477" class="s" text-anchor="middle">override_attribute</text><text x="1332" y="500" class="s" text-anchor="middle">dimension / stride …</text>
+<path d="M1195 550 L1195 610" class="line"/><path d="M1183 596 L1195 610 L1207 596" class="line"/>
+<rect x="910" y="610" width="570" height="150" class="box purple"/>
+<text x="1195" y="650" class="h" text-anchor="middle">同一模板 → 多个实际张量 / MoE expert</text>
+<text x="945" y="695" class="b">减少按 expert 创建、维护或修改 descriptor 的开销</text>
+<text x="945" y="730" class="s">运行时选择地址与形状字段，而不重建整个描述符</text>
+<rect x="70" y="360" width="650" height="400" class="box"/>
+<text x="395" y="405" class="h" text-anchor="middle">PTX 9.4 对应接口范围</text>
+<text x="110" y="458" class="b">支持 override 的操作：</text>
+<text x="135" y="500" class="b">• cp.async.bulk.tensor</text><text x="135" y="540" class="b">• cp.reduce.async.bulk.tensor</text><text x="135" y="580" class="b">• cp.async.bulk.prefetch.tensor</text>
+<path d="M110 620 L680 620" class="line"/>
+<text x="110" y="665" class="b">同时增加：</text><text x="135" y="705" class="b">• eviction priority</text><text x="360" y="705" class="b">• applypriority.async.bulk*</text>
+<rect x="245" y="810" width="1110" height="60" class="box green"/>
+<text x="800" y="848" class="h" text-anchor="middle">第三个 TMA 功能阶段：固定 descriptor → 提交时可覆盖的 descriptor 模板</text>
+</svg>

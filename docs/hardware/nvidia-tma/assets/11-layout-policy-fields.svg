@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:24px;font-weight:700}.b{font-size:20px}.s{font-size:17px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:11 9}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="66" class="t">布局与策略字段：分别作用在数据路径的哪一段</text>
+
+<rect x="55" y="115" width="390" height="585" class="box blue"/>
+<text x="250" y="160" class="h" text-anchor="middle">Global tensor</text>
+<text x="250" y="194" class="s" text-anchor="middle">globalAddress · globalDim · globalStrides</text>
+<rect x="95" y="235" width="310" height="120" class="box"/>
+<g fill="#dff1f5" stroke="#425b61" stroke-width="2">
+<rect x="122" y="265" width="52" height="28"/><rect x="174" y="265" width="52" height="28"/><rect x="226" y="265" width="52" height="28"/><rect x="278" y="265" width="52" height="28"/><rect x="330" y="265" width="48" height="28"/>
+<rect x="122" y="305" width="52" height="28"/><rect x="174" y="305" width="52" height="28"/><rect x="226" y="305" width="52" height="28"/><rect x="278" y="305" width="52" height="28"/><rect x="330" y="305" width="48" height="28"/>
+</g>
+<rect x="95" y="395" width="310" height="120" class="box purple"/>
+<text x="250" y="433" class="h" text-anchor="middle">interleave</text>
+<text x="250" y="469" class="b" text-anchor="middle">解释 global 侧 channel</text>
+<text x="250" y="501" class="b" text-anchor="middle">交错存储方式</text>
+<rect x="95" y="555" width="310" height="100" class="box"/>
+<text x="250" y="594" class="h" text-anchor="middle">tensorDataType</text>
+<text x="250" y="628" class="s" text-anchor="middle">决定每个元素的解释与大小</text>
+
+<path d="M445 405H590" class="line"/><path d="M574 393L590 405L574 417" class="line"/>
+<rect x="505" y="245" width="250" height="105" class="box green"/>
+<text x="630" y="286" class="h" text-anchor="middle">l2Promotion</text>
+<text x="630" y="320" class="s" text-anchor="middle">建议 L2 fetch granularity</text>
+<text x="630" y="379" class="s" text-anchor="middle">DRAM → L2 的填充策略</text>
+
+<rect x="590" y="395" width="420" height="305" class="box orange"/>
+<text x="800" y="440" class="h" text-anchor="middle">TMA 访问窗口</text>
+<text x="800" y="474" class="s" text-anchor="middle">boxDim[] · elementStrides[]</text>
+<g fill="#fffdf7" stroke="#789096" stroke-width="2">
+<rect x="645" y="515" width="62" height="48"/><rect x="707" y="515" width="62" height="48"/><rect x="769" y="515" width="62" height="48"/><rect x="831" y="515" width="62" height="48"/>
+<rect x="645" y="563" width="62" height="48"/><rect x="707" y="563" width="62" height="48"/><rect x="769" y="563" width="62" height="48"/><rect x="831" y="563" width="62" height="48"/>
+</g>
+<g fill="#d77d67"><circle cx="676" cy="539" r="10"/><circle cx="800" cy="539" r="10"/><circle cx="676" cy="587" r="10"/><circle cx="800" cy="587" r="10"/></g>
+<rect x="893" y="515" width="62" height="96" fill="#f7e2e4" stroke="#425b61" stroke-width="2" stroke-dasharray="8 7"/>
+<text x="924" y="637" class="s" text-anchor="middle">越界区</text>
+<rect x="655" y="645" width="290" height="44" class="box pink"/>
+<text x="800" y="674" class="s" text-anchor="middle">oobFill：为越界目标元素生成填充值</text>
+
+<path d="M1010 545H1150" class="line"/><path d="M1134 533L1150 545L1134 557" class="line"/>
+<rect x="1150" y="115" width="395" height="585" class="box green"/>
+<text x="1347" y="160" class="h" text-anchor="middle">Shared-memory tile</text>
+<text x="1347" y="194" class="s" text-anchor="middle">swizzle 规定到达 shared 后的排布</text>
+<g stroke="#425b61" stroke-width="2">
+<rect x="1205" y="245" width="70" height="58" fill="#dff1f5"/><rect x="1275" y="245" width="70" height="58" fill="#fde7c7"/><rect x="1345" y="245" width="70" height="58" fill="#e4f3df"/><rect x="1415" y="245" width="70" height="58" fill="#f7e2e4"/>
+<rect x="1205" y="303" width="70" height="58" fill="#fde7c7"/><rect x="1275" y="303" width="70" height="58" fill="#e4f3df"/><rect x="1345" y="303" width="70" height="58" fill="#f7e2e4"/><rect x="1415" y="303" width="70" height="58" fill="#dff1f5"/>
+<rect x="1205" y="361" width="70" height="58" fill="#e4f3df"/><rect x="1275" y="361" width="70" height="58" fill="#f7e2e4"/><rect x="1345" y="361" width="70" height="58" fill="#dff1f5"/><rect x="1415" y="361" width="70" height="58" fill="#fde7c7"/>
+</g>
+<rect x="1205" y="465" width="280" height="105" class="box purple"/>
+<text x="1345" y="506" class="h" text-anchor="middle">swizzle</text>
+<text x="1345" y="541" class="s" text-anchor="middle">改变 shared 中的 bank 排列</text>
+<rect x="1205" y="595" width="280" height="62" class="box"/>
+<text x="1345" y="634" class="s" text-anchor="middle">逻辑坐标保持不变</text>
+
+<rect x="165" y="755" width="1270" height="92" class="box"/>
+<text x="800" y="793" class="h" text-anchor="middle">同一描述符中的字段并不作用于同一个位置</text>
+<text x="800" y="827" class="b" text-anchor="middle">interleave 解释 global 布局 · l2Promotion 控制 fetch 建议 · oobFill 处理边界 · swizzle 组织 shared 排布</text>
+</svg>

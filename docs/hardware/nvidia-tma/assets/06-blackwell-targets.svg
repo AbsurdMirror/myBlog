@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:23px;font-weight:700}.b{font-size:19px}.s{font-size:17px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:12 10}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="70" class="t">Blackwell 不是单一 target：产品分支与 TMA 能力需逐项映射</text>
+<rect x="600" y="110" width="400" height="85" class="box orange"/>
+<text x="800" y="148" class="h" text-anchor="middle">“Blackwell 功能阶段”</text><text x="800" y="178" class="s" text-anchor="middle">表示时期内出现接口增量</text>
+<path d="M800 195 L800 245 M165 245 L1435 245 M165 245 L165 290 M505 245 L505 290 M845 245 L845 290 M1265 245 L1265 290" class="line"/>
+<rect x="45" y="290" width="240" height="185" class="box blue"/>
+<text x="165" y="330" class="h" text-anchor="middle">数据中心</text><text x="165" y="375" class="b" text-anchor="middle">sm_100 / 103</text><text x="165" y="415" class="b" text-anchor="middle">CC 10.0 / 10.3</text><text x="165" y="452" class="s" text-anchor="middle">含 B200、B300 等</text>
+<rect x="385" y="290" width="240" height="185" class="box green"/>
+<text x="505" y="330" class="h" text-anchor="middle">Jetson 分支</text><text x="505" y="375" class="b" text-anchor="middle">sm_110</text><text x="505" y="415" class="b" text-anchor="middle">CC 11.0</text><text x="505" y="452" class="s" text-anchor="middle">独立检查变体与限制</text>
+<rect x="725" y="290" width="240" height="185" class="box pink"/>
+<text x="845" y="330" class="h" text-anchor="middle">Workstation /</text><text x="845" y="360" class="h" text-anchor="middle">Consumer</text><text x="845" y="400" class="b" text-anchor="middle">sm_120 / 121</text><text x="845" y="438" class="b" text-anchor="middle">CC 12.0 / 12.1</text>
+<rect x="1065" y="290" width="400" height="185" class="box purple"/>
+<text x="1265" y="330" class="h" text-anchor="middle">GB10 等具体产品</text><text x="1265" y="375" class="b" text-anchor="middle">产品名 → Compute Capability</text><text x="1265" y="412" class="b" text-anchor="middle">→ PTX target → 指令集合</text><text x="1265" y="452" class="s" text-anchor="middle">不能只按架构名称推断</text>
+<path d="M165 475 L165 545 M505 475 L505 545 M845 475 L845 545 M1265 475 L1265 545" class="line dash"/>
+<rect x="120" y="545" width="1360" height="190" class="box"/>
+<text x="800" y="588" class="h" text-anchor="middle">第二层分化：target 后缀决定可见特性集合</text>
+<rect x="245" y="625" width="450" height="70" class="box orange"/><text x="470" y="669" class="b" text-anchor="middle">a target：architecture-specific 特性</text>
+<rect x="905" y="625" width="450" height="70" class="box green"/><text x="1130" y="669" class="b" text-anchor="middle">f target：family-shared 特性</text>
+<path d="M695 660 L905 660" class="line"/>
+<rect x="245" y="785" width="1110" height="65" class="box pink"/>
+<text x="800" y="826" class="h" text-anchor="middle">结论：同属 Blackwell ≠ 拥有完全相同的 TMA 指令与限制</text>
+</svg>

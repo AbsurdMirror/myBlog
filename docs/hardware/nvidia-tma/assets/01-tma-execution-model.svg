@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:25px;font-weight:700}.b{font-size:21px}.s{font-size:18px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:12 10}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="70" class="t">Hopper TMA：一次 tile 搬运如何完成</text>
+<rect x="70" y="115" width="1460" height="120" class="box blue"/>
+<text x="100" y="155" class="h">① Host 侧创建 Tensor Map（多维路径需要）</text>
+<text x="100" y="198" class="b">基址 · 维度 · stride · box · element stride · interleave · swizzle · L2 promotion · OOB fill</text>
+<path d="M800 235 L800 285" class="line"/><path d="M788 271 L800 285 L812 271" class="line"/>
+<rect x="270" y="285" width="1060" height="105" class="box green"/>
+<text x="300" y="328" class="h">② Kernel 中一个选中线程提交</text>
+<text x="300" y="368" class="b">Tensor Map + tile 坐标 + shared-memory 地址 + 完成对象</text>
+<path d="M800 390 L800 440" class="line"/><path d="M788 426 L800 440 L812 426" class="line"/>
+<rect x="500" y="440" width="600" height="92" class="box orange"/>
+<text x="800" y="478" class="h" text-anchor="middle">③ TMA 异步执行</text>
+<text x="800" y="512" class="b" text-anchor="middle">硬件地址生成 + 数据传输</text>
+<path d="M650 532 C600 575 470 575 400 620" class="line"/><path d="M950 532 C1000 575 1130 575 1200 620" class="line"/>
+<rect x="90" y="620" width="620" height="140" class="box blue"/>
+<text x="120" y="662" class="h">④ Global → Shared</text>
+<text x="120" y="705" class="b">mbarrier 报告事务完成</text>
+<text x="120" y="738" class="s">确认完成后，consumer 线程读取 shared-memory tile</text>
+<rect x="890" y="620" width="620" height="140" class="box pink"/>
+<text x="920" y="662" class="h">④ Shared → Global</text>
+<text x="920" y="705" class="b">bulk async-group 组织与等待</text>
+<text x="920" y="738" class="s">满足完成与可见性条件后，才能复用源数据</text>
+<rect x="70" y="800" width="700" height="66" class="box"/>
+<text x="95" y="842" class="s">旁路：1D 连续 bulk copy 只需源地址、目标地址和字节数</text>
+<rect x="800" y="800" width="730" height="66" class="box"/>
+<text x="825" y="842" class="s">语义：TMA 属于 async proxy；跨 proxy 访问需 fence + completion</text>
+</svg>

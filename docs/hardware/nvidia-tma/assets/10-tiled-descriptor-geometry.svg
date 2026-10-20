@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:25px;font-weight:700}.b{font-size:20px}.s{font-size:17px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.thin{stroke:#789096;stroke-width:2;fill:none}.dash{stroke-dasharray:11 9}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="66" class="t">Tiled descriptor：张量范围、内存步长与一次访问形状</text>
+
+<rect x="55" y="105" width="1010" height="715" class="box"/>
+<text x="90" y="150" class="h">二维示例：globalDim = [8, 6]</text>
+<text x="90" y="182" class="s">维度 0 横向、变化最快；维度 1 纵向</text>
+
+<g stroke="#789096" stroke-width="2" fill="#fffdf7">
+<rect x="185" y="235" width="720" height="480"/>
+<path d="M275 235V715 M365 235V715 M455 235V715 M545 235V715 M635 235V715 M725 235V715 M815 235V715"/>
+<path d="M185 315H905 M185 395H905 M185 475H905 M185 555H905 M185 635H905"/>
+</g>
+
+<rect x="365" y="315" width="360" height="240" fill="#fde7c7" fill-opacity="0.72" stroke="#425b61" stroke-width="5" rx="10"/>
+<g fill="#d77d67" stroke="#425b61" stroke-width="2">
+<circle cx="410" cy="355" r="13"/><circle cx="590" cy="355" r="13"/>
+<circle cx="410" cy="435" r="13"/><circle cx="590" cy="435" r="13"/>
+<circle cx="410" cy="515" r="13"/><circle cx="590" cy="515" r="13"/>
+</g>
+
+<path d="M185 750H905" class="line"/><path d="M199 738L185 750L199 762 M891 738L905 750L891 762" class="line"/>
+<text x="545" y="790" class="b" text-anchor="middle">globalDim[0] = 8 个元素</text>
+<path d="M140 235V715" class="line"/><path d="M128 249L140 235L152 249 M128 701L140 715L152 701" class="line"/>
+<text x="91" y="475" class="b" text-anchor="middle" transform="rotate(-90 91 475)">globalDim[1] = 6 个元素</text>
+
+<path d="M950 235V315" class="line dash"/>
+<path d="M938 249L950 235L962 249 M938 301L950 315L962 301" class="line"/>
+<text x="1000" y="475" class="s" text-anchor="middle" transform="rotate(-90 1000 475)">globalStrides[0]：相邻两行的 byte distance</text>
+
+<rect x="345" y="205" width="405" height="54" class="box orange"/>
+<text x="547" y="240" class="b" text-anchor="middle">boxDim = [4, 3]：框出 4 × 3 区域</text>
+<rect x="330" y="575" width="440" height="76" class="box pink"/>
+<text x="550" y="606" class="b" text-anchor="middle">elementStrides = [2, 1]</text>
+<text x="550" y="634" class="s" text-anchor="middle">横向每隔 2 个元素取样；纵向逐行取样</text>
+
+<rect x="1100" y="105" width="445" height="715" class="box green"/>
+<text x="1322" y="150" class="h" text-anchor="middle">字段之间的分工</text>
+<rect x="1140" y="190" width="365" height="100" class="box blue"/>
+<text x="1168" y="228" class="h">globalAddress</text>
+<text x="1168" y="261" class="s">张量数据的起始地址</text>
+<rect x="1140" y="315" width="365" height="125" class="box purple"/>
+<text x="1168" y="352" class="h">globalDim[]</text>
+<text x="1168" y="384" class="s">定义每一维的元素数量</text>
+<text x="1168" y="414" class="s">确定合法坐标边界</text>
+<rect x="1140" y="465" width="365" height="125" class="box orange"/>
+<text x="1168" y="502" class="h">globalStrides[]</text>
+<text x="1168" y="534" class="s">把高维坐标转换成 byte 位移</text>
+<text x="1168" y="564" class="s">维度 0 无显式 global stride</text>
+<rect x="1140" y="605" width="365" height="175" class="box pink"/>
+<text x="1168" y="640" class="b" font-weight="700">boxDim[]</text>
+<text x="1168" y="670" class="b" font-weight="700">+ elementStrides[]</text>
+<text x="1168" y="705" class="s">前者定义访问框的范围</text>
+<text x="1168" y="735" class="s">后者定义框内各维的取样间隔</text>
+<text x="1168" y="765" class="s">圆点表示本例真正访问的元素</text>
+
+<rect x="245" y="838" width="1110" height="46" class="box blue"/>
+<text x="800" y="869" class="s" text-anchor="middle">descriptor 给出张量结构和 tile 形状；PTX 指令提供本次 tile 的起始坐标</text>
+</svg>

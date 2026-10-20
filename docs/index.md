@@ -8,6 +8,14 @@ updated: 2026-10-14
 
 从一张结构图开始，逐层理解模型的数据流、数学公式与张量形状。
 
+## GPU 架构与编程
+
+### NVIDIA Tensor Memory Accelerator
+
+[阅读 NVIDIA TMA 调研系列](hardware/nvidia-tma/index.md)
+
+前两章已经发布：先从 Ampere、Hopper、Blackwell 到 Rubin 建立 TMA 产品与能力演进地图，再深入 Hopper 第一代 Tensor Map、bulk/tensor copy、完成机制与 descriptor proxy 的 PTX 设计。
+
 ## 模型解析
 
 ### DeepSeek V4.1 · Flash

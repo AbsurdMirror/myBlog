@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:25px;font-weight:700}.b{font-size:20px}.s{font-size:18px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:12 10}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="70" class="t">H200 / GH200：产品扩展，而非新的 TMA 功能阶段</text>
+<rect x="585" y="115" width="430" height="125" class="box orange"/>
+<text x="800" y="160" class="h" text-anchor="middle">共同 GPU 基线</text>
+<text x="800" y="202" class="b" text-anchor="middle">Hopper · Compute Capability 9.0 · 首代 TMA</text>
+<path d="M700 240 C600 300 430 315 360 380 M900 240 C1000 300 1170 315 1240 380" class="line"/>
+<rect x="100" y="380" width="600" height="300" class="box blue"/>
+<text x="400" y="430" class="h" text-anchor="middle">H200</text>
+<text x="140" y="485" class="b">产品变化</text>
+<rect x="140" y="515" width="200" height="70" class="box green"/><text x="240" y="558" class="b" text-anchor="middle">HBM3e</text>
+<rect x="365" y="515" width="270" height="70" class="box green"/><text x="500" y="558" class="b" text-anchor="middle">更大容量 / 更高带宽</text>
+<text x="140" y="635" class="s">改变 TMA 所处的内存系统与可处理规模</text>
+<rect x="900" y="380" width="600" height="300" class="box pink"/>
+<text x="1200" y="430" class="h" text-anchor="middle">GH200</text>
+<text x="940" y="485" class="b">系统变化</text>
+<rect x="940" y="515" width="170" height="70" class="box green"/><text x="1025" y="558" class="b" text-anchor="middle">Grace CPU</text>
+<path d="M1110 550 L1240 550" class="line"/><text x="1175" y="535" class="s" text-anchor="middle">NVLink-C2C</text>
+<rect x="1240" y="515" width="200" height="70" class="box blue"/><text x="1340" y="558" class="b" text-anchor="middle">Hopper GPU</text>
+<text x="940" y="635" class="s">组成 coherent superchip，改变系统数据路径</text>
+<rect x="175" y="740" width="1250" height="115" class="box"/>
+<text x="800" y="782" class="h" text-anchor="middle">当前官方接口资料：未给出 H200 / GH200 专属 TMA 操作增量</text>
+<text x="800" y="825" class="b" text-anchor="middle">保留实验问题：H100、H200、GH200 的延迟、吞吐与并发是否不同？</text>
+</svg>
