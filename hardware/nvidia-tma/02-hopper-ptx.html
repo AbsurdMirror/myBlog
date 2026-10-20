@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计 · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css"></head>
+<body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/02-hopper-ptx.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="第二章hopper-第一代-tma-的-ptx-设计">第二章：Hopper 第一代 TMA 的 PTX 设计</h1>
+<blockquote>
+<p>本文是 <a href="index.html">NVIDIA TMA 调研系列</a> 第二章，聚焦 Hopper/PTX 8.0–8.3。上一篇：<a href="01-overview.html">NVIDIA 产品迭代与 TMA 概述</a>；引用编号见<a href="references.html">参考资料索引</a>。Blackwell PTX 8.6–8.8 与 Rubin PTX 9.4 的演进将由后续独立文章展开。</p>
+</blockquote>
+<blockquote>
+<p>状态：Hopper 成稿，已完成结构、事实与格式复核（2026-10-13）<br />
+范围：Hopper / Compute Capability 9.0；以 PTX ISA 8.0 首发接口为基线，补充 PTX 8.3 的 Hopper descriptor 修改与 proxy 指令<br />
+资料回指：<a href="references.html">参考资料索引</a></p>
+</blockquote>
+<p>本章只整理两类对象：<strong>TMA 描述符</strong>和<strong>TMA 相关 PTX 指令</strong>。描述符部分先给出完整对象边界和字段表，再逐字段解释；指令部分先给出指令全集，再按统一格式解释每条指令的修饰符和操作数。</p>
+<h2 id="tma-描述符">2.1 TMA 描述符</h2>
+<h3 id="对象与字段总表">2.1.1 对象与字段总表</h3>
+<p>Hopper 对外使用的 tensor map 类型是 <code>CUtensorMap</code>。PTX 8.0 将 tensor map 定义为 <strong>128 B 的 opaque object</strong>；CUDA 12.0 Driver API 使用 16 个 64-bit qword 承载该对象，并要求对象地址至少按 64 B 对齐 [S027][S028]：</p>
+<pre class="cpp"><code>#define CU_TENSOR_MAP_NUM_QWORDS 16
+
+typedef struct CUtensorMap_st {
+    cuuint64_t opaque[CU_TENSOR_MAP_NUM_QWORDS];
+} CUtensorMap;</code></pre>
+<p>PTX 不定义其内部字段布局。下面只列 CUDA Driver API 对外提供的逻辑字段。</p>
+<h4 id="tiled-descriptor">Tiled descriptor</h4>
+<p><code>cuTensorMapEncodeTiled</code> 接受以下字段 [S028]：</p>
+<table>
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 28%" />
+<col style="width: 28%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th style="text-align: right;">数量</th>
+<th style="text-align: right;">API 输入类型</th>
+<th>Hopper 合法范围或单位</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensorDataType</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">enum</td>
+<td>13 种数据类型，枚举值 0–12</td>
+</tr>
+<tr class="even">
+<td><code>tensorRank</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;"><code>uint32_t</code></td>
+<td>1–5</td>
+</tr>
+<tr class="odd">
+<td><code>globalAddress</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">pointer</td>
+<td>无 interleave 或 16B interleave 时至少 16 B 对齐；32B interleave 时至少 32 B 对齐</td>
+</tr>
+<tr class="even">
+<td><code>globalDim[i]</code></td>
+<td style="text-align: right;">rank</td>
+<td style="text-align: right;"><code>uint64_t[]</code></td>
+<td>每维 1–2³² 个元素</td>
+</tr>
+<tr class="odd">
+<td><code>globalStrides[i]</code></td>
+<td style="text-align: right;">rank − 1</td>
+<td style="text-align: right;"><code>uint64_t[]</code></td>
+<td>byte；16 B 的倍数且 <code>&lt; 2⁴⁰</code>；32B interleave 时为 32 B 的倍数</td>
+</tr>
+<tr class="even">
+<td><code>boxDim[i]</code></td>
+<td style="text-align: right;">rank</td>
+<td style="text-align: right;"><code>uint32_t[]</code></td>
+<td>每维 1–256 个元素</td>
+</tr>
+<tr class="odd">
+<td><code>elementStrides[i]</code></td>
+<td style="text-align: right;">rank</td>
+<td style="text-align: right;"><code>uint32_t[]</code></td>
+<td>每维 1–8 个元素</td>
+</tr>
+<tr class="even">
+<td><code>interleave</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">enum</td>
+<td>none、16B、32B</td>
+</tr>
+<tr class="odd">
+<td><code>swizzle</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">enum</td>
+<td>none、32B、64B、128B</td>
+</tr>
+<tr class="even">
+<td><code>l2Promotion</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">enum</td>
+<td>none、64B、128B、256B</td>
+</tr>
+<tr class="odd">
+<td><code>oobFill</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">enum</td>
+<td>zero、OOB-NaN</td>
+</tr>
+</tbody>
+</table>
+<h4 id="im2col-descriptor">Im2col descriptor</h4>
+<p>Im2col descriptor 与 tiled descriptor 共用 <code>tensorDataType</code>、<code>tensorRank</code>、<code>globalAddress</code>、<code>globalDim</code>、<code>globalStrides</code>、<code>elementStrides</code>、<code>interleave</code>、<code>swizzle</code>、<code>l2Promotion</code> 和 <code>oobFill</code>，并以以下字段替代 <code>boxDim[]</code> [S027][S028]：</p>
+<table>
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 28%" />
+<col style="width: 28%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th style="text-align: right;">数量</th>
+<th style="text-align: right;">API 输入类型</th>
+<th>Hopper 合法范围</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>pixelBoxLowerCorner[]</code></td>
+<td style="text-align: right;">rank − 2</td>
+<td style="text-align: right;"><code>int32_t[]</code></td>
+<td>3D：1 个 16-bit signed 值；4D：2 个 8-bit signed 值；5D：3 个 4-bit signed 值</td>
+</tr>
+<tr class="even">
+<td><code>pixelBoxUpperCorner[]</code></td>
+<td style="text-align: right;">rank − 2</td>
+<td style="text-align: right;"><code>int32_t[]</code></td>
+<td>与 lower corner 相同</td>
+</tr>
+<tr class="odd">
+<td><code>channelsPerPixel</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;"><code>uint32_t</code></td>
+<td><code>≤ 256</code>；CUDA 12.0 文档未另列非零下限</td>
+</tr>
+<tr class="even">
+<td><code>pixelsPerColumn</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;"><code>uint32_t</code></td>
+<td><code>≤ 1024</code>；CUDA 12.0 文档未另列非零下限</td>
+</tr>
+</tbody>
+</table>
+<p>在前向卷积中，可以把每个输出位置对应的 <code>R × S × Cin</code> 输入窗口展平为一行。全部 <code>N × P × Q</code> 个输出位置组成激活矩阵 <code>A[N×P×Q, R×S×Cin]</code>；卷积权重组成矩阵 <code>B[R×S×Cin, Cout]</code>。二者相乘得到 <code>C[N×P×Q, Cout]</code>，其每一行已经对应一个输出位置，只需逻辑上恢复为 <code>Output[N, P, Q, Cout]</code>，或由 GEMM epilogue 直接按该布局写回，不需要 col2im。下图采用常见的 <code>A[M,K] × B[K,Cout]</code> 表达；实际 shared-memory 排列可以转置或 swizzle。</p>
+<p><img src="assets/09-im2col-to-gemm.svg" alt="前向卷积通过 Im2col 转换为矩阵乘法，并将 GEMM 结果恢复为输出张量" /></p>
+<h3 id="字段逐项解释">2.1.2 字段逐项解释</h3>
+<h4 id="tensordatatype"><code>tensorDataType</code></h4>
+<p>描述 global tensor 元素如何解释，也决定 TMA load、store 和 reduce 的元素语义。Hopper/CUDA 12.0 的枚举为：</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;">API 值</th>
+<th>类型</th>
+<th>元素大小或语义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">0</td>
+<td><code>UINT8</code></td>
+<td>1 B</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">1</td>
+<td><code>UINT16</code></td>
+<td>2 B</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">2</td>
+<td><code>UINT32</code></td>
+<td>4 B</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">3</td>
+<td><code>INT32</code></td>
+<td>4 B</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">4</td>
+<td><code>UINT64</code></td>
+<td>8 B</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">5</td>
+<td><code>INT64</code></td>
+<td>8 B</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">6</td>
+<td><code>FLOAT16</code></td>
+<td>2 B</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">7</td>
+<td><code>FLOAT32</code></td>
+<td>4 B</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">8</td>
+<td><code>FLOAT64</code></td>
+<td>8 B</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">9</td>
+<td><code>BFLOAT16</code></td>
+<td>2 B</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">10</td>
+<td><code>FLOAT32_FTZ</code></td>
+<td>4 B；global reduction 使用 FTZ 语义</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">11</td>
+<td><code>TFLOAT32</code></td>
+<td>global 按 FP32，shared 侧按 TF32 表达</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">12</td>
+<td><code>TFLOAT32_FTZ</code></td>
+<td>TF32 搬运并带 global reduction FTZ 语义</td>
+</tr>
+</tbody>
+</table>
+<p>PTX <code>tensormap.replace.elemtype</code> 使用另一套立即数映射，不应直接套用 Driver API 的枚举值；该映射在 2.2.11 单独列出 [S031]。</p>
+<h4 id="tensorrank"><code>tensorRank</code></h4>
+<p>描述 global tensor 的维数，Hopper 支持 1D–5D。CUDA API 输入实际 rank；<code>tensormap.replace.tile.rank</code> 则输入 <code>rank - 1</code>，即用 0–4 表示 1D–5D。它与 PTX 指令上的 <code>.1d</code>–<code>.5d</code> 是两个相互约束的表达：descriptor 保存 tensor 结构，指令修饰符决定本次操作采用的坐标向量长度和指令变体 [S027][S031]。</p>
+<h4 id="globaladdress"><code>globalAddress</code></h4>
+<p>global tensor 的起始地址。无 interleave 或 16B interleave 时至少 16 B 对齐；32B interleave 时至少 32 B 对齐 [S028]。</p>
+<h4 id="globaldimi"><code>globalDim[i]</code></h4>
+<p>第 <code>i</code> 维的全局元素数量，单位是<strong>元素</strong>。每维必须非零且不超过 2³²。维度 0 是最内层、变化最快的维度；PTX 指令的 <code>tensorCoords[i]</code> 使用同一维序 [S028]。</p>
+<h4 id="globalstridesi"><code>globalStrides[i]</code></h4>
+<p>从一个高维切片移动到下一个切片所需的 byte distance，单位是<strong>字节</strong>。rank 为 <code>R</code> 时只需要 <code>R-1</code> 个 stride，因为维度 0 的相邻元素距离由数据类型和 interleave 规则确定。Hopper 要求 stride 为 16 B 的倍数且小于 2⁴⁰；32B interleave 时还必须是 32 B 的倍数 [S028]。</p>
+<h4 id="boxdimi"><code>boxDim[i]</code></h4>
+<p>一次 TMA tiled 操作在第 <code>i</code> 维覆盖的 bounding-box 范围，单位是<strong>元素</strong>，每维为 1–256。它不是 global tensor 的 shape，也不是 shared-memory byte stride。无 interleave 时，<code>boxDim[0] × elementSize</code> 必须是 16 B 的倍数 [S027][S028]。</p>
+<h4 id="elementstridesi"><code>elementStrides[i]</code></h4>
+<p>bounding box 在第 <code>i</code> 维遍历 global tensor 时的元素步长，单位是<strong>元素</strong>，范围为 1–8。值为 1 表示逐元素遍历；值大于 1 表示跳跃访问。实际访问元素数为 <code>ceil(boxDim[i] / elementStrides[i])</code>。无 interleave 时，TMA 不支持维度 0 的 stride，因此 <code>elementStrides[0]</code> 被忽略 [S027][S028]。</p>
+<p><img src="assets/10-tiled-descriptor-geometry.svg" alt="Tiled descriptor 的几何字段：globalDim、globalStrides、boxDim 与 elementStrides 的关系" /></p>
+<h4 id="interleave"><code>interleave</code></h4>
+<p>说明 global-memory tensor 的物理 channel interleave 布局。Hopper 支持 none、16B 和 32B。interleave 不是 shared-memory swizzle：前者解释 global 侧的交错存储，后者决定数据到达 shared memory 后的排布。启用 interleave 时 rank 至少为 3；32B interleave 还提高 global address 和 global stride 的对齐要求 [S027][S028]。</p>
+<h4 id="swizzle"><code>swizzle</code></h4>
+<p>指定数据写入或读出 shared memory 时使用的 bank swizzle，Hopper 支持 none、32B、64B 和 128B。无 interleave 时，最内层 bounding-box byte width 不得超过所选 swizzle span；32B interleave 预期与 32B swizzle 配合。swizzle 不改变 global tensor 的逻辑坐标，而改变 shared-memory 线性数据的物理排列 [S027][S028]。</p>
+<h4 id="l2promotion"><code>l2Promotion</code></h4>
+<p>指定从 DRAM 填充到 L2 时建议采用的 fetch granularity：none、64B、128B 或 256B。它是缓存填充策略字段，不改变 tensor 的逻辑 shape、坐标或 copy 的正确性语义 [S028]。</p>
+<h4 id="oobfill"><code>oobFill</code></h4>
+<p>指定 bounding box 越过 global tensor 边界时生成的目标值。Hopper 支持 zero fill 和特殊 OOB-NaN fill；后者仅适用于浮点数据类型。该字段使边缘 tile 的越界元素可以由 TMA 生成，不要求指令为每个元素携带 predicate [S027][S028]。</p>
+<p><img src="assets/11-layout-policy-fields.svg" alt="TMA 描述符中 interleave、L2 promotion、OOB fill 与 swizzle 在数据路径上的作用位置" /></p>
+<h4 id="im2col-专属字段">Im2col 专属字段</h4>
+<p><code>pixelBoxLowerCorner[]</code> 与 <code>pixelBoxUpperCorner[]</code> 分别给出 DHW 各维 filter box 的下角和上角相对 offset。rank 为 3、4、5 时分别有 1、2、3 个分量；随着分量数增加，每项可用的有符号取值宽度依次为 16、8、4 bit。</p>
+<p><code>channelsPerPixel</code> 表示每个 pixel 沿 C 维访问的元素数，CUDA 12.0 给出的上限为 256；<code>pixelsPerColumn</code> 表示一个 column 沿 NDHW 维访问的元素总数，上限为 1024。corner 字段只规定 DHW 空间中的坐标边界，不直接规定访问元素数。该版文档没有为这两个字段另列非零下限 [S027][S028]。</p>
+<p>Im2col descriptor 只支持 3D、4D 和 5D，分别解释为 NWC、NHWC 和 NDHWC [S027]。</p>
+<p><img src="assets/12-im2col-fields.svg" alt="Im2col descriptor 的专属字段：pixel box、channelsPerPixel 与 pixelsPerColumn" /></p>
+<h2 id="tma-相关-ptx-指令">2.2 TMA 相关 PTX 指令</h2>
+<h3 id="指令全集">2.2.1 指令全集</h3>
+<p>PTX 8.0 为 <code>sm_90</code> 建立了两条相邻但不同的路径：不使用 tensor map 的一维 bulk path，以及使用 tensor map 的 tensor path。为了完整呈现 Hopper TMA 的 PTX 设计，下表同时列出二者 [S027]。</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>指令</th>
+<th>使用 tensor map</th>
+<th>功能</th>
+<th>首发 PTX / target</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>prefetch.{const\|param}.tensormap</code></td>
+<td>是</td>
+<td>预取 descriptor 本身</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="even">
+<td><code>cp.async.bulk</code></td>
+<td>否</td>
+<td>一维连续 bulk copy</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="odd">
+<td><code>cp.reduce.async.bulk</code></td>
+<td>否</td>
+<td>一维连续 bulk copy + reduction</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="even">
+<td><code>cp.async.bulk.prefetch</code></td>
+<td>否</td>
+<td>一维连续区域预取到 L2</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="odd">
+<td><code>cp.async.bulk.tensor</code></td>
+<td>是</td>
+<td>1D–5D tensor copy</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="even">
+<td><code>cp.reduce.async.bulk.tensor</code></td>
+<td>是</td>
+<td>tensor store + reduction</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="odd">
+<td><code>cp.async.bulk.prefetch.tensor</code></td>
+<td>是</td>
+<td>tensor region 预取到 L2</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="even">
+<td><code>cp.async.bulk.commit_group</code></td>
+<td>间接</td>
+<td>提交当前线程的 bulk-group 操作</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="odd">
+<td><code>cp.async.bulk.wait_group</code></td>
+<td>间接</td>
+<td>等待 bulk async-groups</td>
+<td>PTX 8.0 / <code>sm_90</code></td>
+</tr>
+<tr class="even">
+<td><code>tensormap.replace</code></td>
+<td>修改 descriptor</td>
+<td>修改 tiled descriptor 字段</td>
+<td>PTX 8.3 / <code>sm_90a</code></td>
+</tr>
+<tr class="odd">
+<td><code>tensormap.cp_fenceproxy</code></td>
+<td>descriptor copy + proxy release</td>
+<td>将 shared 中修改后的 128 B descriptor 复制到 global 并发布给 tensormap proxy</td>
+<td>PTX 8.3 / <code>sm_90</code></td>
+</tr>
+<tr class="even">
+<td><code>fence.proxy.tensormap::generic</code></td>
+<td>descriptor proxy fence</td>
+<td>在 generic proxy 与 tensormap proxy 之间建立定向顺序</td>
+<td>PTX 8.3 / <code>sm_90</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="prefetch.tensormap">2.2.2 <code>prefetch.tensormap</code></h3>
+<pre class="ptx"><code>prefetch.const.tensormap [a];
+prefetch.param.tensormap [a];</code></pre>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>取值或类型</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>prefetch</code></td>
+<td>opcode</td>
+<td>发出缓存预取提示，不产生程序可见的 tensor 数据结果</td>
+</tr>
+<tr class="even">
+<td><code>.const</code> / <code>.param</code></td>
+<td>descriptor state space</td>
+<td>Hopper PTX 8.0 tensor map 可位于 constant space 或 entry parameter space</td>
+</tr>
+<tr class="odd">
+<td><code>.tensormap</code></td>
+<td>object class</td>
+<td>指明预取对象是供后续 tensor bulk instruction 使用的 tensor map</td>
+</tr>
+<tr class="even">
+<td><code>[a]</code></td>
+<td>descriptor address</td>
+<td>tensor-map object 的地址</td>
+</tr>
+</tbody>
+</table>
+<p>这条指令预取的是 descriptor，不是 descriptor 所描述的 tensor data。tensor data 的 L2 预取由 <code>cp.async.bulk.prefetch.tensor</code> 表达 [S027]。</p>
+<h3 id="cp.async.bulk">2.2.3 <code>cp.async.bulk</code></h3>
+<pre class="ptx"><code>// global -&gt; shared::cluster；multicast 和 cache hint 均可选
+cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes{.multicast::cluster}{.L2::cache_hint}
+    [dstMem], [srcMem], size, [mbar] {, ctaMask} {, cache-policy};
+
+// shared::cta -&gt; shared::cluster，目标必须是另一 CTA
+cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes
+    [dstMem], [srcMem], size, [mbar];
+
+// shared::cta -&gt; global
+cp.async.bulk.global.shared::cta.bulk_group{.L2::cache_hint}
+    [dstMem], [srcMem], size {, cache-policy};</code></pre>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>取值或类型</th>
+<th>含义与限制</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dst</code></td>
+<td><code>.shared::cluster</code> / <code>.global</code></td>
+<td>目标 state space</td>
+</tr>
+<tr class="even">
+<td><code>.src</code></td>
+<td><code>.global</code> / <code>.shared::cta</code></td>
+<td>源 state space</td>
+</tr>
+<tr class="odd">
+<td><code>.mbarrier::complete_tx::bytes</code></td>
+<td>completion modifier</td>
+<td>copy 完成时按实际 byte count 更新 <code>[mbar]</code>；用于 global→shared 和 CTA→remote CTA shared</td>
+</tr>
+<tr class="even">
+<td><code>.bulk_group</code></td>
+<td>completion modifier</td>
+<td>选择发起线程私有的 bulk async-group 完成机制；随后由同一线程执行 <code>commit_group</code> 和 <code>wait_group</code></td>
+</tr>
+<tr class="odd">
+<td><code>.multicast::cluster</code></td>
+<td>optional modifier</td>
+<td>global 数据写入 <code>ctaMask</code> 选中的多个 CTA 的相同 shared offset，并向对应 mbarrier 发送完成通知</td>
+</tr>
+<tr class="even">
+<td><code>.L2::cache_hint</code></td>
+<td>optional modifier</td>
+<td>表示末尾存在 64-bit <code>cache-policy</code> operand</td>
+</tr>
+<tr class="odd">
+<td><code>[dstMem]</code></td>
+<td>address</td>
+<td>目标地址；shared→shared 时必须映射到 cluster 中另一 CTA</td>
+</tr>
+<tr class="even">
+<td><code>[srcMem]</code></td>
+<td>address</td>
+<td>源地址</td>
+</tr>
+<tr class="odd">
+<td><code>size</code></td>
+<td>32-bit byte count</td>
+<td>必须为 16 B 的倍数</td>
+</tr>
+<tr class="even">
+<td><code>[mbar]</code></td>
+<td>shared-memory mbarrier address</td>
+<td>mbarrier completion object</td>
+</tr>
+<tr class="odd">
+<td><code>ctaMask</code></td>
+<td>16 bit</td>
+<td>bit <code>i</code> 对应 cluster 中 CTA rank <code>i</code></td>
+</tr>
+<tr class="even">
+<td><code>cache-policy</code></td>
+<td>64 bit</td>
+<td>cache eviction policy hint，不改变内存一致性语义</td>
+</tr>
+</tbody>
+</table>
+<h4 id="dst-与-.src"><code>.dst</code> 与 <code>.src</code></h4>
+<p>指令名中的 <code>.dst.src</code> 按“目标在前、源在后”排列，数据实际从 <code>.src</code> 搬到 <code>.dst</code>。</p>
+<p><code>.shared::cta</code> 表示执行当前指令的 CTA 自己的 shared-memory 地址窗口。<code>.shared::cluster</code> 表示当前 CTA cluster 内任意 CTA 的 shared-memory 地址窗口，可以指向本 CTA，也可以指向另一个 CTA。它不是一块独立的 cluster 级物理存储；底层仍是各 CTA 所在 SM 的 shared memory，只是增加了 cluster 范围的寻址方式 [S027][S032]。</p>
+<p><img src="assets/15-ptx-memory-hierarchy.png" alt="PTX memory hierarchy：每个 CTA 的 shared memory 与 cluster 范围的可见性" /></p>
+<p><em>图源：NVIDIA PTX ISA，Memory Hierarchy [S032]。</em></p>
+<p><code>.dst</code> 和 <code>.src</code> 的表中取值不能任意组合。Hopper PTX 8.0 支持以下三种方向：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th><code>.dst.src</code> 组合</th>
+<th>实际方向</th>
+<th>地址含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.shared::cluster.global</code></td>
+<td>global → shared</td>
+<td><code>dstMem</code> 指向 cluster 内某个 CTA 的 shared memory，<code>srcMem</code> 指向 global memory</td>
+</tr>
+<tr class="even">
+<td><code>.shared::cluster.shared::cta</code></td>
+<td>shared → shared</td>
+<td><code>srcMem</code> 位于当前 CTA 的 shared memory；<code>dstMem</code> 必须指向 cluster 内另一个 CTA 的 shared memory</td>
+</tr>
+<tr class="odd">
+<td><code>.global.shared::cta</code></td>
+<td>shared → global</td>
+<td><code>srcMem</code> 位于当前 CTA 的 shared memory，<code>dstMem</code> 指向 global memory</td>
+</tr>
+</tbody>
+</table>
+<p><code>.multicast::cluster</code> 只适用于 <code>.shared::cluster.global</code> 方向。普通形式由 <code>dstMem</code> 指定一个 shared-memory 目标；加入 multicast 后，<code>ctaMask</code> 选择 cluster 内的多个目标 CTA，global source data 会写入这些 CTA 各自 shared memory 中与 <code>dstMem</code> 相同的 CTA-relative offset。对应的完成通知也发送到各目标 CTA 中与 <code>mbar</code> 相同的相对位置。</p>
+<p><code>ctaMask</code> 是 16-bit 位掩码，第 <code>i</code> 位对应 <code>%cluster_ctarank == i</code> 的 CTA；置 1 表示该 CTA 是本次 multicast 的目标。掩码宽度提供可表示的 CTA rank 范围，本身不定义当前 cluster 实际包含多少个 CTA [S027]。</p>
+<p>下图将三种合法的 <code>.dst.src</code> 组合展开为四种数据路径，并补充一个不受支持的反向 shared-memory 路径。每个场景上方保留实际 PTX 形式，其中紧跟 <code>cp.async.bulk</code> 的两个 state-space modifier 依次是 <code>.dst</code> 和 <code>.src</code>。</p>
+<p><img src="assets/17-tma-copy-directions.png" alt="TMA 支持的数据搬运方向、multicast 路径及对应 PTX 形式" /></p>
+<p>图中的④与⑤需要成对理解：Hopper 支持当前 CTA 的 <code>.shared::cta</code> 作为 source，把数据写入同一 cluster 中另一个 CTA 的 <code>.shared::cluster</code>；不支持把远端 <code>.shared::cluster</code> 作为 source，再由 TMA 拉回当前 CTA 的 <code>.shared::cta</code>。因此 shared→shared 不是方向对称的能力。</p>
+<p><code>srcMem</code>、<code>dstMem</code> 必须 16 B 对齐，访问区间不得越出相应 state space。该指令不使用 tensor map，不包含多维 shape、stride、swizzle 或 OOB 处理 [S027]。</p>
+<h4 id="bulk-async-group">Bulk async-group</h4>
+<p><code>.bulk_group</code> 表示该异步操作采用 <strong>bulk async-group</strong> 管理完成状态。它不是一个由程序显式创建或命名的共享对象，而是当前线程按指令顺序维护的分组机制：线程先发出若干采用 <code>.bulk_group</code> completion 的 bulk async 操作，再执行 <code>cp.async.bulk.commit_group</code>，把这些尚未提交的操作封装成一个新 group [S027]。</p>
+<p>下图左侧给出一个线程的指令流。①、②先发出两次 copy，③再把它们提交为 G0；④由⑤提交为 G1；⑥、⑦由⑧提交为 G2；⑨由⑩提交为 G3。也就是说，<code>commit_group</code> 是一组操作的结束边界，不是该组中的第一条 copy。图中的 G0–G3 只是为了说明提交先后而使用的名称，PTX 指令不会返回可供程序引用的 group ID。</p>
+<p><img src="assets/14-bulk-async-group.png" alt="一个线程将 bulk async 操作依次提交为多个 group，并以 wait_group N 等待较早的 group" /></p>
+<p>右下部分表示：假设 G0–G3 已按顺序提交，<code>cp.async.bulk.wait_group N</code> 允许最新的 <code>N</code> 个 group 仍未完成，但要求更早的 group 全部完成。因此，<code>wait_group 0</code> 等待四组全部完成；<code>wait_group 1</code> 只允许最新的 G3 尚未完成；<code>wait_group 2</code> 允许 G2、G3 尚未完成，依此类推。图中的“允许继续”仅表示这些组不在本次等待的强制完成范围内，并不表示它们一定仍在执行 [S027]。</p>
+<p>分组和等待均以执行指令的线程为作用域：一个线程的 <code>commit_group</code> 只提交该线程此前尚未提交的 bulk async 操作，后续也由同一线程用 <code>wait_group</code> 约束这些 group。组内操作被共同纳入完成判断，但组内彼此不因此获得额外的 memory ordering；<code>.read</code> 形式的较弱等待语义见 2.2.10。</p>
+<h3 id="cp.reduce.async.bulk">2.2.4 <code>cp.reduce.async.bulk</code></h3>
+<pre class="ptx"><code>// shared::cta -&gt; shared::cluster
+cp.reduce.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes.redOp.type
+    [dstMem], [srcMem], size, [mbar];
+
+// shared::cta -&gt; global：一般形式
+cp.reduce.async.bulk.global.shared::cta.bulk_group{.L2::cache_hint}.redOp.type
+    [dstMem], [srcMem], size {, cache-policy};
+
+// shared::cta -&gt; global：FP16/BF16 add 的 no-FTZ 形式
+cp.reduce.async.bulk.global.shared::cta.bulk_group{.L2::cache_hint}.add.noftz.type
+    [dstMem], [srcMem], size {, cache-policy};</code></pre>
+<p><code>cp.reduce.async.bulk</code> 沿用 <code>cp.async.bulk</code> 的地址、大小、完成机制和 L2 cache hint 表达：<code>[dstMem]</code>、<code>[srcMem]</code>、<code>size</code>、<code>[mbar]</code>、<code>.L2::cache_hint</code> 与 <code>cache-policy</code> 的基本含义不变；shared target 仍使用 <code>.mbarrier::complete_tx::bytes</code>，global target 仍使用 <code>.bulk_group</code>。下面只整理相对 <code>cp.async.bulk</code> 新增、删除或发生变化的部分。</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段或形式</th>
+<th>取值</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dst/.src</code></td>
+<td><code>.shared::cluster.shared::cta</code> / <code>.global.shared::cta</code></td>
+<td>改动</td>
+<td>source 固定为当前 CTA 的 <code>.shared::cta</code>；只保留 shared→remote shared 和 shared→global，不再支持 global→shared</td>
+</tr>
+<tr class="even">
+<td><code>.redOp</code></td>
+<td><code>.add</code>、<code>.min</code>、<code>.max</code>、<code>.inc</code>、<code>.dec</code>、<code>.and</code>、<code>.or</code>、<code>.xor</code></td>
+<td>新增</td>
+<td>指定 source element 与对应 destination element 之间执行的 inline reduction</td>
+</tr>
+<tr class="odd">
+<td><code>.type</code></td>
+<td>按 destination 和 <code>.redOp</code> 受限</td>
+<td>新增</td>
+<td>定义每个 reduction element 的类型</td>
+</tr>
+<tr class="even">
+<td><code>.noftz</code></td>
+<td>FP16/BF16 add 的规定形式</td>
+<td>新增</td>
+<td>保留 subnormal input/result，不执行 flush-to-zero</td>
+</tr>
+<tr class="odd">
+<td><code>.multicast::cluster</code> / <code>ctaMask</code></td>
+<td>—</td>
+<td>删除</td>
+<td><code>cp.reduce.async.bulk</code> 不提供 multicast 形式</td>
+</tr>
+</tbody>
+</table>
+<p><code>.type</code> 的合法集合同时取决于 destination 和 <code>.redOp</code>。global destination 支持浮点类型和更多 64-bit 类型；shared::cluster destination 的类型集合更窄。完整组合如下 [S027]：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th><code>.redOp</code></th>
+<th><code>.global</code> destination 的 <code>.type</code></th>
+<th><code>.shared::cluster</code> destination 的 <code>.type</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.add</code></td>
+<td><code>.u32</code>、<code>.s32</code>、<code>.u64</code>、<code>.f32</code>、<code>.f64</code>、<code>.f16</code>、<code>.bf16</code></td>
+<td><code>.u32</code>、<code>.s32</code>、<code>.u64</code></td>
+</tr>
+<tr class="even">
+<td><code>.min</code> / <code>.max</code></td>
+<td><code>.u32</code>、<code>.s32</code>、<code>.u64</code>、<code>.s64</code>、<code>.f16</code>、<code>.bf16</code></td>
+<td><code>.u32</code>、<code>.s32</code></td>
+</tr>
+<tr class="odd">
+<td><code>.inc</code> / <code>.dec</code></td>
+<td><code>.u32</code></td>
+<td><code>.u32</code></td>
+</tr>
+<tr class="even">
+<td><code>.and</code> / <code>.or</code> / <code>.xor</code></td>
+<td><code>.b32</code>、<code>.b64</code></td>
+<td><code>.b32</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="cp.async.bulk.prefetch">2.2.5 <code>cp.async.bulk.prefetch</code></h3>
+<pre class="ptx"><code>cp.async.bulk.prefetch.L2.global{.L2::cache_hint}
+    [srcMem], size {, cache-policy};</code></pre>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>取值或类型</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.L2</code></td>
+<td>fixed、必选</td>
+<td>指令只支持将数据预取到 L2；不存在省略 <code>.L2</code> 或改为 <code>.L1</code> 的形式</td>
+</tr>
+<tr class="even">
+<td><code>.global</code></td>
+<td>fixed、必选</td>
+<td>source 固定为 global memory</td>
+</tr>
+<tr class="odd">
+<td><code>.L2::cache_hint</code></td>
+<td>optional</td>
+<td>表示指令末尾提供 <code>cache-policy</code>；不改变预取目标仍为 L2</td>
+</tr>
+<tr class="even">
+<td><code>[srcMem]</code></td>
+<td>global address</td>
+<td>待预取区域的起始地址，必须 16 B 对齐</td>
+</tr>
+<tr class="odd">
+<td><code>size</code></td>
+<td>32-bit byte count</td>
+<td>待预取的 byte 数，必须为 16 B 的倍数</td>
+</tr>
+<tr class="even">
+<td><code>cache-policy</code></td>
+<td>opaque 64-bit value</td>
+<td>由通用 cache-policy 机制提供的 L2 eviction hint；仅在指定 <code>.L2::cache_hint</code> 时出现</td>
+</tr>
+</tbody>
+</table>
+<p>该指令是 hint：系统“可以”发起预取；它不提供 shared-memory destination，也不产生供程序等待的数据完成对象 [S027]。</p>
+<h3 id="cp.async.bulk.tensor">2.2.6 <code>cp.async.bulk.tensor</code></h3>
+<pre class="ptx"><code>// global -&gt; shared::cluster
+cp.async.bulk.tensor.dim.shared::cluster.global{.load_mode}.mbarrier::complete_tx::bytes{.multicast::cluster}{.L2::cache_hint}
+    [dstMem], [tensorMap, tensorCoords], [mbar]
+    {, im2colOffsets} {, ctaMask} {, cache-policy};
+
+// shared::cta -&gt; global
+cp.async.bulk.tensor.dim.global.shared::cta{.load_mode}.bulk_group{.L2::cache_hint}
+    [tensorMap, tensorCoords], [srcMem] {, cache-policy};</code></pre>
+<p><code>cp.async.bulk.tensor</code> 沿用 2.2.3 的完成机制、multicast 和 L2 cache hint 表达：load 仍使用 <code>.mbarrier::complete_tx::bytes</code>，store 仍使用 <code>.bulk_group</code>；<code>[mbar]</code>、<code>.multicast::cluster</code>、<code>ctaMask</code>、<code>.L2::cache_hint</code> 与 <code>cache-policy</code> 的基本含义不变。shared 侧的 <code>[dstMem]</code> / <code>[srcMem]</code> 也仍是线性 shared-memory 地址。下面只整理 tensor 形式新增、删除或发生变化的部分。</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段或形式</th>
+<th>取值或类型</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dim</code></td>
+<td><code>.1d</code>–<code>.5d</code></td>
+<td>新增</td>
+<td>指定本次 tensor operation 的维度，也决定 <code>tensorCoords</code> 长度</td>
+</tr>
+<tr class="even">
+<td><code>.dst/.src</code></td>
+<td>load：<code>.shared::cluster.global</code>；store：<code>.global.shared::cta</code></td>
+<td>改动</td>
+<td>只保留 global→shared 和 shared→global，不再支持 shared→shared</td>
+</tr>
+<tr class="odd">
+<td><code>.load_mode</code></td>
+<td>load：<code>.tile</code> / <code>.im2col</code>；store：<code>.tile</code> / <code>.im2col_no_offs</code></td>
+<td>新增</td>
+<td>指定 tensor traversal mode；省略时默认为 <code>.tile</code></td>
+</tr>
+<tr class="even">
+<td><code>tensorMap</code></td>
+<td>generic descriptor address</td>
+<td>新增</td>
+<td>PTX 8.0 中指向 <code>.param</code> 或 <code>.const</code> 中的 128-B tensor map，由其提供 global base address、shape、stride、元素类型和布局策略</td>
+</tr>
+<tr class="odd">
+<td><code>tensorCoords</code></td>
+<td><code>.s32</code> vector，长度=<code>dim</code></td>
+<td>新增</td>
+<td>load 时给出 bounding box 在 global tensor 中的起始坐标；store 时给出写回坐标</td>
+</tr>
+<tr class="even">
+<td><code>im2colOffsets</code></td>
+<td><code>.u16</code> vector，长度=<code>dim-2</code></td>
+<td>新增</td>
+<td>仅 <code>.im2col</code> load 使用，动态偏移 W/H/D filter base</td>
+</tr>
+<tr class="odd">
+<td>global 侧 <code>[srcMem]</code> / <code>[dstMem]</code></td>
+<td>—</td>
+<td>删除</td>
+<td>global 位置改由 <code>tensorMap</code> 和 <code>tensorCoords</code> 表达</td>
+</tr>
+<tr class="even">
+<td><code>size</code></td>
+<td>—</td>
+<td>删除</td>
+<td>不再显式给出 byte count；传输范围由 descriptor、<code>.dim</code>、<code>.load_mode</code> 和坐标共同确定</td>
+</tr>
+</tbody>
+</table>
+<p>因此，这一指令的核心变化不是完成机制，而是 global 侧从“线性地址 + byte count”改为“tensor descriptor + tensor coordinates”。tile 的范围和静态布局来自 descriptor，本次动态位置来自 <code>tensorCoords</code>，im2col load 还可以由 <code>im2colOffsets</code> 增加动态 filter offset [S027]。</p>
+<h3 id="cp.reduce.async.bulk.tensor">2.2.7 <code>cp.reduce.async.bulk.tensor</code></h3>
+<pre class="ptx"><code>cp.reduce.async.bulk.tensor.dim.global.shared::cta.redOp{.load_mode}.bulk_group{.L2::cache_hint}
+    [tensorMap, tensorCoords], [srcMem] {, cache-policy};</code></pre>
+<p><code>cp.reduce.async.bulk.tensor</code> 可以看作在 2.2.6 的 tensor store 上加入 2.2.4 的 reduction 语义。它沿用 tensor store 的 <code>.dim</code>、<code>.global.shared::cta</code>、<code>.load_mode</code>、<code>.bulk_group</code>、<code>.L2::cache_hint</code>、<code>tensorMap</code>、<code>tensorCoords</code>、<code>[srcMem]</code> 和 <code>cache-policy</code>。</p>
+<p>相对 2.2.6 的 <code>cp.async.bulk.tensor</code>，需要单独说明的变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段或形式</th>
+<th>取值或类型</th>
+<th>变化类型</th>
+<th>相对 2.2.6 的变化</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>数据方向</td>
+<td><code>.global.shared::cta</code></td>
+<td>收窄</td>
+<td>只保留 shared memory → global memory，不支持 global memory → shared memory</td>
+</tr>
+<tr class="even">
+<td><code>.redOp</code></td>
+<td><code>.add/.min/.max/.inc/.dec/.and/.or/.xor</code></td>
+<td>新增</td>
+<td>在 tensor store 的基础上指定写入 global memory 时执行的 reduction 操作</td>
+</tr>
+<tr class="odd">
+<td>元素类型限制</td>
+<td>取决于 <code>.redOp</code></td>
+<td>新增约束</td>
+<td>元素类型仍由 <code>tensorMap</code> 指定，但必须与 <code>.redOp</code> 构成合法组合</td>
+</tr>
+</tbody>
+</table>
+<p><code>.redOp</code> 的种类和操作含义与 2.2.4 相同，但元素类型不写在 opcode 中，而由 <code>tensorMap</code> 指定。相对 2.2.4 的非 tensor reduction，合法类型组合变化如下：</p>
+<table>
+<thead>
+<tr class="header">
+<th><code>.redOp</code></th>
+<th><code>tensorMap</code> 元素类型</th>
+<th>相对 2.2.4 的变化</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.add</code></td>
+<td><code>.u32/.s32/.u64/.f32/.f16/.bf16</code></td>
+<td>不再支持 <code>.f64</code></td>
+</tr>
+<tr class="even">
+<td><code>.min/.max</code></td>
+<td><code>.u32/.s32/.u64/.s64/.f16/.bf16</code></td>
+<td>不变</td>
+</tr>
+<tr class="odd">
+<td><code>.inc/.dec</code></td>
+<td><code>.u32</code></td>
+<td>不变</td>
+</tr>
+<tr class="even">
+<td><code>.and/.or/.xor</code></td>
+<td><code>.b32/.b64</code></td>
+<td>不变</td>
+</tr>
+</tbody>
+</table>
+<p>因此，这条指令的 tensor 寻址方式来自 2.2.6，reduction 操作来自 2.2.4；元素类型则由 <code>tensorMap</code> 描述符提供 [S027]。</p>
+<h3 id="cp.async.bulk.prefetch.tensor">2.2.8 <code>cp.async.bulk.prefetch.tensor</code></h3>
+<pre class="ptx"><code>cp.async.bulk.prefetch.tensor.dim.L2.global{.load_mode}{.L2::cache_hint}
+    [tensorMap, tensorCoords] {, im2colOffsets} {, cache-policy};</code></pre>
+<p><code>cp.async.bulk.prefetch.tensor</code> 是 2.2.5 <code>cp.async.bulk.prefetch</code> 的 tensor 寻址形式：两者都只是向系统发出从 global memory 预取到 L2 的非阻塞 hint，固定使用 <code>.L2.global</code>，并沿用可选的 <code>.L2::cache_hint</code> 与 <code>cache-policy</code>。tensor 区域的表达方式则与 2.2.6 的 global tensor source 相同。</p>
+<p>相对 2.2.5，变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段或操作数</th>
+<th>取值或类型</th>
+<th>变化类型</th>
+<th>相对 2.2.5 的变化</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dim</code></td>
+<td><code>.1d</code>–<code>.5d</code></td>
+<td>新增</td>
+<td>指定 global tensor 的维度</td>
+</tr>
+<tr class="even">
+<td><code>.load_mode</code></td>
+<td><code>.tile/.im2col</code></td>
+<td>新增</td>
+<td>指定以普通 tile 或 im2col 方式解释预取区域</td>
+</tr>
+<tr class="odd">
+<td><code>[srcMem], size</code></td>
+<td>—</td>
+<td>替换</td>
+<td>不再用线性起始地址和字节数直接描述区域</td>
+</tr>
+<tr class="even">
+<td><code>[tensorMap, tensorCoords]</code></td>
+<td>descriptor address + <code>.s32[dim]</code></td>
+<td>新增</td>
+<td>descriptor 给出 tensor 布局和 box shape，坐标给出预取区域的起点</td>
+</tr>
+<tr class="odd">
+<td><code>im2colOffsets</code></td>
+<td><code>.u16[dim-2]</code></td>
+<td>条件新增</td>
+<td>仅 <code>.im2col</code> 使用，提供动态 W/H/D offset</td>
+</tr>
+</tbody>
+</table>
+<p>这里预取的是 descriptor 所描述的 <strong>global tensor 数据区域</strong>；2.2.2 的 <code>prefetch.tensormap</code> 预取的则是 <strong>descriptor 自身</strong> [S027]。</p>
+<h3 id="cp.async.bulk.commit_group">2.2.9 <code>cp.async.bulk.commit_group</code></h3>
+<pre class="ptx"><code>cp.async.bulk.commit_group;</code></pre>
+<p>这条指令没有显式操作数，也不发起数据搬运；它只为当前线程划定一个新的 bulk async-group。被纳入该 group 的操作必须同时满足：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>条件</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>由当前线程发起</td>
+<td>bulk async-group 是 per-thread 的，不能提交其他线程发起的操作</td>
+</tr>
+<tr class="even">
+<td>使用 <code>.bulk_group</code> completion</td>
+<td>使用 mbarrier completion 的操作不属于 bulk async-group</td>
+</tr>
+<tr class="odd">
+<td>尚未被此前的 <code>commit_group</code> 提交</td>
+<td>每个操作只能进入一个 group</td>
+</tr>
+</tbody>
+</table>
+<p>满足条件的此前操作被组成一个新 group；没有待提交操作时，仍会生成一个 trivially complete 的空 group。<code>commit_group</code> 只建立 group 边界，不在组内不同操作之间建立 memory ordering [S027]。</p>
+<h3 id="cp.async.bulk.wait_group">2.2.10 <code>cp.async.bulk.wait_group</code></h3>
+<pre class="ptx"><code>cp.async.bulk.wait_group N;
+cp.async.bulk.wait_group.read N;</code></pre>
+<p><code>wait_group</code> 等待 2.2.9 提交的 per-thread bulk async-group。<code>N</code> 是整数常量：指令返回时，最多允许最新的 <code>N</code> 个 group 仍处于 pending 状态，所有更早的 group 都必须达到该指令要求的完成条件；<code>N=0</code> 因而等待此前提交的全部 group。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>指令形式</th>
+<th>对被等待 group 的完成要求</th>
+<th>返回后能够安全进行的操作</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>wait_group N</code></td>
+<td>source read 完成、destination write 完成，并且这些 write 对执行等待的线程可见</td>
+<td>可以复用 source，也可以由当前线程消费 destination</td>
+</tr>
+<tr class="even">
+<td><code>wait_group.read N</code></td>
+<td>只要求 source read 完成</td>
+<td>可以提前复用 source；不能据此认为 destination write 已完成或可见</td>
+</tr>
+</tbody>
+</table>
+<p>这里的 <code>N</code> 表示“最多保留多少个最新 group 未完成”，不是某个 group 的编号 [S027]。</p>
+<h3 id="hopper-sm_90a-的-descriptor-修改指令">2.2.11 Hopper <code>sm_90a</code> 的 descriptor 修改指令</h3>
+<p>PTX 8.3 在 Hopper architecture-specific target <code>sm_90a</code> 上增加 <code>tensormap.replace</code>，使 device 代码能够修改已有 tensor map 的指定字段。它只支持 tiled descriptor，不支持 im2col descriptor，也不是执行普通 TMA copy 的必备指令 [S031]。</p>
+<pre class="ptx"><code>tensormap.replace.mode.field1{.ss}.b1024.type [addr], new_val;
+tensormap.replace.mode.field2{.ss}.b1024.type [addr], ord, new_val;
+tensormap.replace.mode.field3{.ss}.b1024.type [addr], new_val;
+
+.mode   = { .tile }
+.field1 = { .global_address, .rank }
+.field2 = { .box_dim, .global_dim, .global_stride, .element_stride }
+.field3 = { .elemtype, .interleave_layout, .swizzle_mode, .fill_mode }
+.ss     = { .global, .shared::cta }
+.type   = { .b32, .b64 }</code></pre>
+<p>三种语法形式对应三类 descriptor 字段：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段类别</th>
+<th>可修改字段</th>
+<th>操作数形式</th>
+<th>类型与取值约束</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.field1</code></td>
+<td><code>.global_address/.rank</code></td>
+<td><code>[addr], new_val</code></td>
+<td><code>global_address</code> 使用 <code>.b64</code>；<code>rank</code> 使用 <code>.b32</code>，且 <code>new_val = 实际 rank - 1</code></td>
+</tr>
+<tr class="even">
+<td><code>.field2</code></td>
+<td><code>.box_dim/.global_dim/.global_stride/.element_stride</code></td>
+<td><code>[addr], ord, new_val</code></td>
+<td><code>global_stride</code> 使用 <code>.b64</code>，其余使用 <code>.b32</code>；<code>ord</code> 指定要修改的维度</td>
+</tr>
+<tr class="odd">
+<td><code>.field3</code></td>
+<td><code>.elemtype/.interleave_layout/.swizzle_mode/.fill_mode</code></td>
+<td><code>[addr], new_val</code></td>
+<td>使用 <code>.b32</code>，且 <code>new_val</code> 必须是立即数</td>
+</tr>
+</tbody>
+</table>
+<p>其余公共字段如下：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.tile</code></td>
+<td>固定的 descriptor mode；Hopper 版本不支持修改 im2col descriptor</td>
+</tr>
+<tr class="even">
+<td><code>.ss</code></td>
+<td>descriptor 位于 <code>.global</code>、<code>.shared::cta</code>；省略时使用 generic addressing</td>
+</tr>
+<tr class="odd">
+<td><code>.b1024</code></td>
+<td>操作对象是完整的 1024-bit opaque tensor map，即使指令只替换其中一个字段</td>
+</tr>
+<tr class="even">
+<td><code>addr</code></td>
+<td>descriptor 地址</td>
+</tr>
+<tr class="odd">
+<td><code>ord</code></td>
+<td><code>.field2</code> 数组字段的维度序号，必须落在该字段实际元素数内；一般最大为 4，<code>global_stride</code> 的 <code>ord</code> 最大为 <code>rank - 2</code></td>
+</tr>
+</tbody>
+</table>
+<p>Hopper 中 <code>.field3</code> 的 <code>new_val</code> 映射为：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th><code>.field3</code></th>
+<th><code>new_val</code> 映射</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.elemtype</code></td>
+<td>0=<code>u8</code>，1=<code>u16</code>，2=<code>u32</code>，3=<code>s32</code>，4=<code>u64</code>，5=<code>s64</code>，6=<code>f16</code>，7=<code>f32</code>，8=<code>f32.ftz</code>，9=<code>f64</code>，10=<code>bf16</code>，11=<code>tf32</code>，12=<code>tf32.ftz</code></td>
+</tr>
+<tr class="even">
+<td><code>.interleave_layout</code></td>
+<td>0=none，1=16 B，2=32 B</td>
+</tr>
+<tr class="odd">
+<td><code>.swizzle_mode</code></td>
+<td>0=none，1=32 B，2=64 B，3=128 B</td>
+</tr>
+<tr class="even">
+<td><code>.fill_mode</code></td>
+<td>0=zero fill，1=OOB-NaN fill</td>
+</tr>
+</tbody>
+</table>
+<p>PTX 明确说明 <code>.elemtype</code> 的这些数值与 Driver API 的 <code>CUtensorMapDataType</code> 枚举值并不相同。尽管指令只替换一个字段，<code>tensormap.replace</code> 在 memory consistency model 中仍被视为对整个 1024-bit tensor map 的 weak memory operation [S031]。</p>
+<h3 id="descriptor-proxy-指令">2.2.12 Descriptor proxy 指令</h3>
+<p>TMA 通过 tensormap proxy 读取 descriptor，而 <code>tensormap.replace</code> 等普通写入属于 generic proxy。device 代码修改 descriptor 后，必须在两种 proxy 之间建立顺序，才能让后续 TMA 操作读取更新后的内容。PTX 8.3 为此增加了 <code>fence.proxy.tensormap::generic</code> 和 <code>tensormap.cp_fenceproxy</code>；它们要求 <code>sm_90</code>，并不要求 <code>sm_90a</code> [S031]。</p>
+<pre class="ptx"><code>// descriptor 已直接写在 global：发布 generic 写入
+fence.proxy.tensormap::generic.release.scope;
+
+// descriptor 先在 shared::cta 中修改：复制到 global，并执行 proxy release
+tensormap.cp_fenceproxy.global.shared::cta.proxy.tensormap::generic.release.scope.sync.aligned
+    [dst], [src], 128;
+
+// 消费更新后的 descriptor 前执行 address-scoped proxy acquire
+fence.proxy.tensormap::generic.acquire.scope [addr], 128;
+
+.scope = { .cta, .cluster, .gpu, .sys }</code></pre>
+<p>下图分别展开两种完整的 descriptor 更新方式。方式 A 直接修改 global descriptor，随后执行 proxy release；方式 B 先在 CTA shared memory 中修改 descriptor，再由 <code>tensormap.cp_fenceproxy</code> 将完整的 128 B descriptor 复制到 global memory，并同时执行 proxy release。每个场景左侧是 PTX 指令流，右侧编号相同的标记表示该指令在内存层级中的作用位置。消费端在发起 TMA 前执行 address-scoped acquire，之后 TMA 才通过 tensormap proxy 读取该 global descriptor。</p>
+<p><img src="assets/13-descriptor-update-paths.png" alt="直接修改 global descriptor 与先在 shared memory 修改再复制的两种更新路径" /></p>
+<p>图中的 <code>Thread</code> 表示执行这些指令的线程角色，不表示 PTX 强制要求独立的生产者线程和消费者线程。同一线程可以按 <code>replace → release → acquire → TMA</code> 的顺序完成整个过程，此时 program order 已保证 release 先于 acquire。若 descriptor 由一个线程生产、由另一个线程消费，则还必须通过 barrier、原子通信或 kernel/stream 顺序等已有同步关系，保证生产者的 release 发生在消费者的 acquire 之前；proxy fence 负责跨 proxy 的顺序和可见性，本身不会等待未来才发生的 release。执行同步也不能替代消费端的 tensormap-proxy acquire [S031]。</p>
+<p>方式 B 还包含一项执行主体约束：<code>tensormap.replace...shared::cta</code> 可以由单个线程完成，但 <code>tensormap.cp_fenceproxy...sync.aligned</code> 必须由 warp 内所有线程一致执行；只有一个 lane 到达该指令时，行为未定义 [S031]。</p>
+<p>两条 descriptor 更新路径的区别如下：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>descriptor 的修改位置</th>
+<th>release 操作</th>
+<th>实际效果</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>global memory</td>
+<td><code>fence.proxy.tensormap::generic.release.scope</code></td>
+<td>不复制数据，只把此前对 global descriptor 的 generic 写入发布给 tensormap proxy</td>
+</tr>
+<tr class="even">
+<td>CTA shared memory</td>
+<td><code>tensormap.cp_fenceproxy...release...</code></td>
+<td>将完整 128 B descriptor 从 shared::cta 复制到 global，并在复制后执行 proxy release</td>
+</tr>
+</tbody>
+</table>
+<p>随后，消费线程在使用该 global descriptor 发起 TMA 操作前，对相同的 128 B 地址范围执行 <code>fence.proxy.tensormap::generic.acquire.scope [addr], 128</code>。</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>含义与限制</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.tensormap::generic</code></td>
+<td>建立从 generic proxy 到 tensormap proxy 的单向顺序</td>
+</tr>
+<tr class="even">
+<td><code>.release/.acquire</code></td>
+<td>release 发布 descriptor 写入；address-scoped acquire 使后续 tensormap 访问按该顺序观察该 descriptor</td>
+</tr>
+<tr class="odd">
+<td><code>.scope</code></td>
+<td>可以直接观察该同步效果的线程范围</td>
+</tr>
+<tr class="even">
+<td><code>.global.shared::cta</code></td>
+<td>fused 指令固定从 CTA shared memory 复制到 global memory</td>
+</tr>
+<tr class="odd">
+<td><code>.sync</code></td>
+<td>执行线程等待到 warp 内所有线程都执行该指令后再继续</td>
+</tr>
+<tr class="even">
+<td><code>.aligned</code></td>
+<td>warp 内所有线程必须执行相同的指令；若位于分支中，各线程必须对条件作出一致判断</td>
+</tr>
+<tr class="odd">
+<td><code>[dst]/[src]</code></td>
+<td>分别是 non-generic global 地址和 non-generic shared::cta 地址</td>
+</tr>
+<tr class="even">
+<td><code>size</code></td>
+<td><code>tensormap.cp_fenceproxy</code> 的合法值固定为 128 B；对完整 descriptor 执行 acquire 时同样使用 128 B</td>
+</tr>
+</tbody>
+</table>
+<p>这些 proxy 指令只在 descriptor 被 device 代码修改时使用，不是普通 TMA copy 的固定前序步骤 [S031]。</p>
+<hr />
+<p><a href="index.html">返回系列目录</a> · <a href="01-overview.html">上一篇：NVIDIA 产品迭代与 TMA 概述</a> · <a href="references.html">参考资料索引</a></p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-20<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/02-hopper-ptx.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:25px;font-weight:700}.b{font-size:20px}.s{font-size:17px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:11 9}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="65" class="t">搬运同一个二维 tile：线程协作 copy 与描述符驱动 TMA</text>
+<rect x="55" y="105" width="715" height="690" class="box pink"/>
+<text x="412" y="150" class="h" text-anchor="middle">Ampere cp.async</text>
+<text x="412" y="182" class="s" text-anchor="middle">线程显式拆分 tile，并分别计算地址</text>
+<rect x="95" y="220" width="250" height="185" class="box blue"/>
+<text x="220" y="255" class="h" text-anchor="middle">线程组</text>
+<g fill="#fffdf7" stroke="#425b61" stroke-width="2">
+<circle cx="135" cy="305" r="19"/><circle cx="190" cy="305" r="19"/><circle cx="245" cy="305" r="19"/><circle cx="300" cy="305" r="19"/>
+<circle cx="135" cy="360" r="19"/><circle cx="190" cy="360" r="19"/><circle cx="245" cy="360" r="19"/><circle cx="300" cy="360" r="19"/>
+</g>
+<text x="220" y="394" class="s" text-anchor="middle">多线程参与</text>
+<path d="M345 312 L420 312" class="line"/><path d="M406 300 L420 312 L406 324" class="line"/>
+<rect x="420" y="225" width="300" height="175" class="box orange"/>
+<text x="570" y="263" class="h" text-anchor="middle">线程侧工作</text>
+<text x="450" y="305" class="b">① 计算各自源 / 目标地址</text>
+<text x="450" y="342" class="b">② 遍历各自负责的区域</text>
+<text x="450" y="379" class="b">③ 发出多条 4 / 8 / 16B copy</text>
+<path d="M570 400 L570 460" class="line"/><path d="M558 446 L570 460 L582 446" class="line"/>
+<rect x="125" y="460" width="590" height="125" class="box"/>
+<text x="420" y="495" class="h" text-anchor="middle">许多小粒度 cp.async 操作覆盖整个 tile</text>
+<g fill="#dff1f5" stroke="#425b61" stroke-width="2">
+<rect x="165" y="520" width="58" height="35"/><rect x="223" y="520" width="58" height="35"/><rect x="281" y="520" width="58" height="35"/><rect x="339" y="520" width="58" height="35"/><rect x="397" y="520" width="58" height="35"/><rect x="455" y="520" width="58" height="35"/><rect x="513" y="520" width="58" height="35"/><rect x="571" y="520" width="58" height="35"/><rect x="629" y="520" width="46" height="35"/>
+</g>
+<path d="M420 585 L420 635" class="line"/><path d="M408 621 L420 635 L432 621" class="line"/>
+<rect x="165" y="635" width="510" height="105" class="box purple"/>
+<text x="420" y="676" class="h" text-anchor="middle">cp.async group / pipeline / barrier</text>
+<text x="420" y="712" class="s" text-anchor="middle">线程共同管理提交与完成</text>
+<rect x="830" y="105" width="715" height="690" class="box green"/>
+<text x="1187" y="150" class="h" text-anchor="middle">Hopper TMA</text>
+<text x="1187" y="182" class="s" text-anchor="middle">软件描述 tile，硬件完成地址生成与搬运</text>
+<rect x="870" y="220" width="280" height="185" class="box blue"/>
+<text x="1010" y="258" class="h" text-anchor="middle">提交参数</text>
+<text x="900" y="302" class="b">• Tensor Map</text>
+<text x="900" y="340" class="b">• tile 坐标</text>
+<text x="900" y="378" class="b">• shared 地址 + mbarrier</text>
+<path d="M1150 312 L1215 312" class="line"/><path d="M1201 300 L1215 312 L1201 324" class="line"/>
+<rect x="1215" y="220" width="285" height="185" class="box orange"/>
+<text x="1357" y="258" class="h" text-anchor="middle">一个选中线程</text>
+<circle cx="1357" cy="315" r="32" fill="#fffdf7" stroke="#425b61" stroke-width="3"/>
+<text x="1357" y="322" class="b" text-anchor="middle">T0</text>
+<text x="1357" y="374" class="s" text-anchor="middle">提交一次 tile 级操作</text>
+<path d="M1357 405 L1357 460" class="line"/><path d="M1345 446 L1357 460 L1369 446" class="line"/>
+<rect x="880" y="460" width="620" height="125" class="box"/>
+<text x="1190" y="497" class="h" text-anchor="middle">TMA 硬件依据描述符生成地址并搬运</text>
+<rect x="925" y="520" width="530" height="35" fill="#e4f3df" stroke="#425b61" stroke-width="2"/>
+<path d="M1190 555 L1190 635" class="line"/><path d="M1178 621 L1190 635 L1202 621" class="line"/>
+<rect x="935" y="635" width="510" height="105" class="box purple"/>
+<text x="1190" y="676" class="h" text-anchor="middle">mbarrier 报告 tile 事务完成</text>
+<text x="1190" y="712" class="s" text-anchor="middle">consumer 确认完成后读取 shared tile</text>
+<path d="M800 120 L800 785" class="line dash"/>
+<rect x="190" y="825" width="1220" height="52" class="box blue"/>
+<text x="800" y="859" class="h" text-anchor="middle">责任转移：线程计算地址并发出多条 copy → 描述符表达访问、TMA 执行 tile 搬运</text>
+</svg>

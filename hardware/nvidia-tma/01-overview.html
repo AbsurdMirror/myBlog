@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>NVIDIA TMA（一）：产品迭代与 TMA 概述 · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css"></head>
+<body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/01-overview.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="第一章nvidia-产品迭代与-tma-概述">第一章：NVIDIA 产品迭代与 TMA 概述</h1>
+<blockquote>
+<p>状态：第一章初版（2026-10-12 重新调研并自审通过）<br />
+调研截止：2026-10-12<br />
+本文是 <a href="index.html">NVIDIA TMA 调研系列</a> 第一章；引用编号见<a href="references.html">参考资料索引</a>。下一篇：<a href="02-hopper-ptx.html">Hopper 第一代 TMA 的 PTX 设计</a>。</p>
+</blockquote>
+<h2 id="研究对象与分析口径">1.1 研究对象与分析口径</h2>
+<h3 id="tma-的工作定义">1.1.1 TMA 的工作定义</h3>
+<p>本文所称 <strong>TMA（Tensor Memory Accelerator）</strong>，是 NVIDIA 从 Hopper/Compute Capability 9.0 开始提供的一组面向 shared memory 的大粒度异步数据搬运能力及其编程接口。当前 CUDA Programming Guide 将 TMA 作为总称，并把具体操作分成两类 [S001]：</p>
+<ul>
+<li><strong>bulk-asynchronous copy</strong>：以指针和字节数描述一维连续区域；</li>
+<li><strong>bulk-tensor asynchronous copy</strong>：以 tensor map 和张量坐标描述一至五维区域。</li>
+</ul>
+<p>这两类操作通常由一个被选中的线程发起，由异步路径执行，并以显式完成机制通知使用者。多维操作进一步把全局张量的维度、stride、box、元素步长、interleave、swizzle、越界填充和 L2 promotion 等属性编码在 tensor map 中 [S001][S002][S005]。</p>
+<p>官方资料会从不同层次描述 TMA。Hopper 架构文章称其为新的 async memory copy unit；CUDA Programming Guide 用 TMA 统称相关功能；CuTe 文档则从软件使用角度称其为一组指令 [S001][S002][S009]。本文据此采用以下术语层次：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>术语</th>
+<th>本文中的含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>TMA</td>
+<td>整体硬件加速机制及其对外能力</td>
+</tr>
+<tr class="even">
+<td>bulk asynchronous copy</td>
+<td>不使用 tensor map 的一维连续大粒度异步拷贝</td>
+</tr>
+<tr class="odd">
+<td>bulk-tensor asynchronous copy</td>
+<td>使用 tensor map 的一至五维张量异步拷贝</td>
+</tr>
+<tr class="even">
+<td>tensor map / TMA descriptor</td>
+<td>描述全局张量及其 TMA 访问属性的不透明对象</td>
+</tr>
+<tr class="odd">
+<td>TMA unit / engine</td>
+<td>官方架构资料所称的异步拷贝硬件单元；内部结构留到第四章分析</td>
+</tr>
+</tbody>
+</table>
+<h3 id="官方名称">1.1.2 官方名称</h3>
+<p>NVIDIA 文档先后使用过两种全称：</p>
+<ul>
+<li>Hopper 架构文章在 2022 年使用 <strong>Tensor Memory Accelerator</strong> [S002]；</li>
+<li>CUDA 12.0 Driver API 和 CUDA 12.5 Programming Guide 使用 <strong>Tensor Memory Access</strong> [S005][S008]；</li>
+<li>当前 CUDA Programming Guide 使用 <strong>Tensor Memory Accelerator</strong> [S001]。</li>
+</ul>
+<p>两种全称在相关文档中都指向 TMA 编程模型。本文统一使用当前名称 Tensor Memory Accelerator；引用历史资料时保留原文名称。</p>
+<h3 id="研究范围">1.1.3 研究范围</h3>
+<p>本调研覆盖以下对象：</p>
+<ol type="1">
+<li>一维 bulk copy 与一至五维 bulk-tensor copy；</li>
+<li>global memory、CTA shared memory 和 cluster distributed shared memory 之间的受支持路径；</li>
+<li>tensor map 的寻址、布局、越界处理和缓存属性；</li>
+<li>multicast、reduction、prefetch、mask、gather/scatter 和 descriptor override 等扩展；</li>
+<li>TMA 操作的发起方式、async proxy 语义以及 mbarrier、bulk async-group 等完成机制；</li>
+<li>各产品、Compute Capability、PTX target、SASS 实现和硬件行为之间的对应关系。</li>
+</ol>
+<p><code>mbarrier</code>、thread block cluster、distributed shared memory 和 async proxy 是 TMA 编程模型的配套机制，同时也具有独立用途。CUDA pipeline、<code>cuda::barrier</code>、<code>cuda::memcpy_async</code> 和 CUTLASS/CuTe TMA wrapper 属于高层接口或软件封装。后续章节会分析它们与 TMA 的接口，但分别保留其自身的概念边界 [S001][S002][S006][S009]。</p>
+<p>作为比较基线，本文还研究 Ampere <code>cp.async</code>。它提供小粒度 global-to-shared 异步拷贝，是 Hopper TMA 的直接技术前身 [S002][S003][S006][S007]。通用 host-device copy engine、Tensor Core 以及 Blackwell Tensor Memory（TMEM）分别承担系统级搬运、矩阵计算和片上张量存储功能；本文只在它们与 TMA 数据路径发生直接联系时讨论这些对象。</p>
+<h3 id="代际判定方法">1.1.4 代际判定方法</h3>
+<p>本文分别记录四条时间轴：GPU 产品、Compute Capability、PTX 接口和 TMA 硬件实现。代际判断使用三种层级：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>层级</th>
+<th>判定条件</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>产品扩展</td>
+<td>新产品沿用既有 Compute Capability 或既有 TMA 接口，主要变化发生在容量、带宽或系统形态</td>
+</tr>
+<tr class="even">
+<td>功能阶段</td>
+<td>PTX 或官方架构资料给出新的 TMA 对外能力，且适用 target 可以确定</td>
+</tr>
+<tr class="odd">
+<td>硬件实现代际</td>
+<td>SASS、微架构资料或性能实验显示执行单元、数据路径、队列或吞吐机制发生实质变化</td>
+</tr>
+</tbody>
+</table>
+<p>第一章可以确定产品扩展和功能阶段。硬件实现代际需要第三章的 SASS 证据与第四章的硬件、专利和性能证据共同确认。</p>
+<h2 id="tma-的技术前身与引入动机">1.2 TMA 的技术前身与引入动机</h2>
+<h3 id="传统-global-to-shared-搬运">1.2.1 传统 global-to-shared 搬运</h3>
+<p>GPU kernel 常把 global memory 中的数据 tile 搬入 shared memory，再由线程块内的计算线程重复使用。传统路径由线程完成以下工作：</p>
+<ol type="1">
+<li>计算每个元素的 global address；</li>
+<li>从 global memory 读取到寄存器；</li>
+<li>从寄存器写入 shared memory；</li>
+<li>同步后消费 shared-memory tile。</li>
+</ol>
+<p>较大的多维 tile 因而需要大量线程级 load/store、地址计算、边界判断和循环控制。寄存器既保存计算状态，也承担数据中转。</p>
+<h3 id="ampere-cp.async">1.2.2 Ampere <code>cp.async</code></h3>
+<p>Ampere/CC 8.0 引入硬件加速的 global-to-shared asynchronous copy。<code>cp.async</code> 可以绕过中间寄存器，并通过 pipeline 或 barrier 将搬运与计算重叠 [S006][S007]。单条 <code>cp.async</code> 处理 4、8 或 16 字节；完成一个 tile 时，线程共同计算地址并发出多条指令。</p>
+<p>Ampere 因此建立了异步、寄存器旁路的 global-to-shared 路径。tile 级的多维地址生成、stride、边界和区域遍历仍由线程指令完成 [S002]。</p>
+<h3 id="hopper-tma-的设计增量">1.2.3 Hopper TMA 的设计增量</h3>
+<p>Hopper TMA 把搬运区域的描述和地址生成从逐元素线程指令提升到 tile 级操作 [S002][S003]：</p>
+<ul>
+<li>一个被选中的线程可以发起整个大块或张量 tile 的搬运；</li>
+<li>tensor map 保存全局张量布局和搬运属性；</li>
+<li>硬件根据 tensor map 与 tile 坐标生成地址，并处理受支持的边界和布局转换；</li>
+<li>数据直接在 global memory 与 shared memory 相关空间之间传输；</li>
+<li>发起线程可继续执行其他工作，消费者通过完成机制等待数据；</li>
+<li>cluster multicast 可把一次全局数据获取分发到多个 CTA 的 shared memory。</li>
+</ul>
+<p>相较 Ampere，TMA 的主要变化是操作粒度、地址生成位置、数据路径范围和布局表达能力，而异步执行与寄存器旁路是两代机制共有的基础。</p>
+<h2 id="产品架构与软件时间线">1.3 产品、架构与软件时间线</h2>
+<h3 id="四个不同的引入节点">1.3.1 四个不同的“引入”节点</h3>
+<p>一项架构能力通常依次经历产品公布、硬件供货、工具链支持和公共编程接口发布。TMA 的首代引入也分布在多个节点：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>时间</th>
+<th>节点</th>
+<th>对 TMA 的意义</th>
+<th>依据</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>2020</td>
+<td>Ampere A100，CC 8.0</td>
+<td><code>cp.async</code> 与 split arrive/wait barrier 构成直接技术前身</td>
+<td>[S006][S007]</td>
+</tr>
+<tr class="even">
+<td>2022-03-22</td>
+<td>Hopper/H100 发布</td>
+<td>NVIDIA 首次公开 TMA unit、descriptor 地址生成和 1D–5D 搬运</td>
+<td>[S002][S014]</td>
+</tr>
+<tr class="odd">
+<td>2022-09-20</td>
+<td>H100 宣布 full production</td>
+<td>Hopper TMA 进入量产产品阶段</td>
+<td>[S014]</td>
+</tr>
+<tr class="even">
+<td>2022-10</td>
+<td>CUDA 11.8、PTX 7.8</td>
+<td>工具链支持 Hopper/<code>sm_90</code>；PTX 已建立 cluster 等基础设施</td>
+<td>[S013]</td>
+</tr>
+<tr class="odd">
+<td>2022-12</td>
+<td>CUDA 12.0、PTX 8.0</td>
+<td>public PTX 发布 bulk/TMA 操作族，Driver API 提供 tensor map 管理</td>
+<td>[S004][S005][S012][S024]</td>
+</tr>
+<tr class="even">
+<td>2023-11</td>
+<td>H200 发布</td>
+<td>Hopper 产品扩展到 HBM3e、更高容量和带宽</td>
+<td>[S011][S015]</td>
+</tr>
+<tr class="odd">
+<td>2024-03</td>
+<td>B200/GB200 发布</td>
+<td>Blackwell 数据中心产品节点，官方产品表映射为 CC 10.0</td>
+<td>[S011][S016]</td>
+</tr>
+<tr class="even">
+<td>2024-05，CUDA 12.5</td>
+<td>Programming Guide 新增系统化的 TMA 章节</td>
+<td>高层 CUDA C++ 文档集中说明 TMA 用法</td>
+<td>[S008]</td>
+</tr>
+<tr class="odd">
+<td>PTX 8.6–8.8</td>
+<td>Blackwell 相关 target 与 TMA 扩展</td>
+<td>增加 CTA-local destination、copy mask、gather/scatter 和 family-specific target 等能力</td>
+<td>[S018]</td>
+</tr>
+<tr class="even">
+<td>2025-03</td>
+<td>B300/GB300 发布</td>
+<td>Blackwell Ultra 产品节点，官方产品表映射为 CC 10.3</td>
+<td>[S011][S017]</td>
+</tr>
+<tr class="odd">
+<td>2026-01 至 03</td>
+<td>Rubin 发布并宣布 full production</td>
+<td>官方公开 enhanced TMA 与 inline descriptor update</td>
+<td>[S020][S021]</td>
+</tr>
+<tr class="even">
+<td>PTX 9.4</td>
+<td>descriptor override 等新表达</td>
+<td>公开 global address 与 descriptor attribute override，以及新的缓存优先级控制</td>
+<td>[S022]</td>
+</tr>
+</tbody>
+</table>
+<p>Hopper 的架构介绍早于公共 PTX 指令族约九个月。本文把 2022 年 3 月作为 TMA 的架构公开节点，把 CUDA 12.0/PTX 8.0 作为首个成体系、可系统分析的公共底层编程接口节点 [S002][S004][S012][S014]。</p>
+<h3 id="产品与-compute-capability">1.3.2 产品与 Compute Capability</h3>
+<p>NVIDIA 当前产品表给出的映射如下 [S011]：</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>产品</th>
+<th style="text-align: right;">Compute Capability</th>
+<th>本章分类</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>A100、A30</td>
+<td style="text-align: right;">8.0</td>
+<td><code>cp.async</code> 前代基线</td>
+</tr>
+<tr class="even">
+<td>H100、H200、GH200 GPU</td>
+<td style="text-align: right;">9.0</td>
+<td>Hopper 首代 TMA 产品族</td>
+</tr>
+<tr class="odd">
+<td>B200、GB200</td>
+<td style="text-align: right;">10.0</td>
+<td>Blackwell 数据中心功能扩展节点</td>
+</tr>
+<tr class="even">
+<td>B300、GB300</td>
+<td style="text-align: right;">10.3</td>
+<td>Blackwell Ultra 产品与 target 扩展节点</td>
+</tr>
+<tr class="odd">
+<td>Jetson T4000、T5000</td>
+<td style="text-align: right;">11.0</td>
+<td>独立产品分支，按 <code>sm_110</code> 目标核对能力</td>
+</tr>
+<tr class="even">
+<td>RTX PRO Blackwell、GeForce RTX 50 系列</td>
+<td style="text-align: right;">12.0</td>
+<td>Blackwell workstation/consumer 分支</td>
+</tr>
+<tr class="odd">
+<td>GB10 / DGX Spark</td>
+<td style="text-align: right;">12.1</td>
+<td><code>sm_120</code> family 的后续产品分支</td>
+</tr>
+<tr class="even">
+<td>Rubin GPU</td>
+<td style="text-align: right;">产品表尚未给出 CC 映射</td>
+<td>官方已确认 enhanced TMA</td>
+</tr>
+</tbody>
+</table>
+<p>当前 CUDA Programming Guide 把 TMA unit 列为 CC 9.0 及后续架构支持的功能，同时把 CC 10.0、10.3、10.7、11.0 和 12.x 分开列出 [S023]。产品名称只能确定研究入口；每项 TMA 能力仍需依据具体 PTX target 判定。</p>
+<h3 id="baselinearchitecture-specific-与-family-specific-target">1.3.3 baseline、architecture-specific 与 family-specific target</h3>
+<p>从 CC 9.0 开始，CUDA 区分基础特性与 architecture-specific 特性；从 CC 10.0 开始，又增加 family-specific 特性 [S023]：</p>
+<ul>
+<li><code>sm_90</code> 表示 Hopper 基础目标，<code>sm_90a</code> 开放 Hopper architecture-specific 特性；</li>
+<li><code>sm_100a</code>、<code>sm_103a</code> 等 <code>a</code> target 只兼容对应 Compute Capability；</li>
+<li><code>sm_100f</code>、<code>sm_103f</code>、<code>sm_120f</code> 等 <code>f</code> target 表示同一 family 共享的特性集合；</li>
+<li>同一产品品牌下的不同 Compute Capability 可以具有不同的 tensor mode、数据类型、swizzle 或其他限制。</li>
+</ul>
+<p>以 multicast 为例，CUDA Programming Guide 建议在 <code>sm_90a</code> 上使用其优化路径；PTX 的其他 TMA 扩展也分别规定最低 target 或 <code>a/f</code> target [S001][S018]。第二章将按指令变体记录这些限制。</p>
+<h2 id="hopper首代-tma-的能力基线">1.4 Hopper：首代 TMA 的能力基线</h2>
+<h3 id="基本执行模型">1.4.1 基本执行模型</h3>
+<p><img src="assets/01-tma-execution-model.svg" alt="TMA 基本执行模型：Tensor Map 创建、线程提交、异步执行与两类完成路径" /></p>
+<p>多维 TMA 操作的基本流程为：</p>
+<ol type="1">
+<li>软件通过 CUDA API 创建 tensor map，编码 global tensor 的基址、维度、stride、box、element stride、interleave、swizzle、L2 promotion 和 OOB fill 等属性；</li>
+<li>kernel 中的一个被选中线程提交 tensor map、tile 坐标、shared-memory 地址和完成对象；</li>
+<li>TMA 异步执行地址生成与数据传输；</li>
+<li>global-to-shared 路径通常以 mbarrier 报告事务完成，shared-to-global 路径以 bulk async-group 组织和等待；</li>
+<li>计算线程在确认完成后消费 shared-memory tile，或在写回路径满足相应完成与可见性条件后复用源数据。</li>
+</ol>
+<p>一维连续 bulk copy 直接使用源地址、目标地址和字节数，不需要 tensor map [S001]。TMA 操作属于 async proxy；跨 generic proxy 与 async proxy 的访问需要遵循相应 fence 和完成语义 [S001][S012]。</p>
+<h3 id="首代公共能力">1.4.2 首代公共能力</h3>
+<p><img src="assets/02-first-generation-capabilities.svg" alt="首代 TMA 公共能力基线：搬运形态、传输方向、Cluster 分发、数据操作、完成机制与 Tensor Map 属性" /></p>
+<p>PTX 8.0 建立了 Hopper TMA 的公共能力基线 [S002][S003][S012]：</p>
+<ul>
+<li>一维连续 bulk copy；</li>
+<li>由 tensor map 描述的一至五维 tensor copy；</li>
+<li>global-to-shared 与 shared-to-global 双向传输；</li>
+<li>同一 cluster 内的 shared-to-shared 传输；</li>
+<li>global-to-cluster shared multicast；</li>
+<li>tile 与 im2col 访问模式；</li>
+<li>shared-to-global 的 element-wise reduction；</li>
+<li>tensor prefetch 和 L2 cache hint；</li>
+<li>interleave、swizzle、OOB fill 和 L2 promotion 等 tensor map 属性；</li>
+<li>mbarrier-based 与 bulk async-group-based completion。</li>
+</ul>
+<p>首代 TMA 覆盖连续块、1D–5D 张量、多种传输方向、cluster 分发、布局处理、reduction、prefetch 和完成语义。这些能力共同构成后续代际扩展的比较基线 [S001][S003][S012]。</p>
+<h3 id="与-ampere-cp.async-的对照">1.4.3 与 Ampere <code>cp.async</code> 的对照</h3>
+<p><img src="assets/03-ampere-hopper-comparison.svg" alt="同一二维 tile 在 Ampere cp.async 与 Hopper TMA 执行模型下的搬运路径" /></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>维度</th>
+<th>Ampere <code>cp.async</code></th>
+<th>Hopper TMA</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>单条操作的描述粒度</td>
+<td>每线程 4/8/16B</td>
+<td>单线程可描述大块或整个 tile</td>
+</tr>
+<tr class="even">
+<td>地址生成</td>
+<td>线程计算各项地址并遍历区域</td>
+<td>硬件依据 tensor map 与坐标生成地址</td>
+</tr>
+<tr class="odd">
+<td>形状表达</td>
+<td>小粒度一维 global-to-shared</td>
+<td>连续块与 1D–5D tensor mode</td>
+</tr>
+<tr class="even">
+<td>传输路径</td>
+<td>global-to-shared</td>
+<td>global/shared 双向及 cluster shared 路径</td>
+</tr>
+<tr class="odd">
+<td>布局与边界</td>
+<td>由线程代码组织</td>
+<td>tensor map 表达 stride、swizzle、OOB 等属性</td>
+</tr>
+<tr class="even">
+<td>发起方式</td>
+<td>多线程协作发出多条 copy</td>
+<td>一个被选中线程可提交 tile 级操作</td>
+</tr>
+<tr class="odd">
+<td>完成机制</td>
+<td><code>cp.async</code> group、pipeline 或 barrier</td>
+<td>mbarrier 或 bulk async-group，取决于传输方向和变体</td>
+</tr>
+</tbody>
+</table>
+<h2 id="后续产品与-tma-功能演进">1.5 后续产品与 TMA 功能演进</h2>
+<h3 id="h200-与-gh200hopper-产品扩展">1.5.1 H200 与 GH200：Hopper 产品扩展</h3>
+<p><img src="assets/04-h200-gh200.svg" alt="H200 与 GH200 延续 Hopper TMA 基线，分别扩展内存系统和 CPU-GPU 系统形态" /></p>
+<p>H200 和 GH200 的 GPU 部分继续采用 Hopper/CC 9.0。H200 的主要产品变化是 HBM3e、显存容量和带宽；GH200 把 Hopper GPU 与 Grace CPU 通过 NVLink-C2C 组成 coherent superchip [S011][S015][S026]。</p>
+<p>这些变化会改变 TMA 所处的内存系统和应用规模。当前官方接口资料未给出 H200 或 GH200 专属的 TMA 操作增量，因此本章将其归入 Hopper 产品扩展。H100、H200 和 GH200 上的具体 TMA 延迟、吞吐与并发差异保留为后续实验问题 [S011][S015][S026]。</p>
+<h3 id="blackwelltma-功能扩展阶段">1.5.2 Blackwell：TMA 功能扩展阶段</h3>
+<p><img src="assets/05-blackwell-features.svg" alt="Blackwell PTX 8.6 至 8.8 的 TMA 接口增量及其相对 Hopper 基线的位置" /></p>
+<p>PTX 8.6–8.8 为 Blackwell 相关目标增加并扩展了多项 TMA 表达 [S018]：</p>
+<ul>
+<li><code>cp.async.bulk</code> 和 <code>cp.async.bulk.tensor</code> 的 global-to-shared 路径增加 <code>.shared::cta</code> 目的状态空间，显式区分本 CTA 的本地投递与既有 <code>.shared::cluster</code> 的 cluster/remote 投递；</li>
+<li><code>cp.async.bulk.tensor</code> 增加 <code>.cta_group::{1,2}</code>，表达单 CTA 与双 CTA group 的投递和完成对象路由；</li>
+<li>bulk store 增加 <code>.cp_mask</code> 与 <code>byteMask</code>，支持选择性写回；</li>
+<li>global-to-shared tensor copy 与 tensor prefetch 增加 <code>.tile::gather4</code>，shared-to-global tensor copy 增加 <code>.tile::scatter4</code>，分别读取或写回四条非连续二维行；</li>
+<li>tensor copy 与 tensor prefetch 增加 <code>.im2col::w</code>、<code>.im2col::w::128</code>，扩展卷积窗口访问模式；</li>
+<li>tensor map 的 swizzle 表达增加新的 swizzle atomicity。</li>
+</ul>
+<p>这些增量在 ISA 中细分了 TMA 的本地与 cluster 目的路径，并扩展了 CTA-group 拓扑、选择性写回、非连续行访问、卷积窗口访问和布局描述能力。本文据此将 Blackwell 标记为第二个 TMA <strong>功能阶段</strong>。该结论描述公共编程能力的变化，不预判 TMA 硬件单元的内部代际 [S018]。</p>
+<p>PTX 8.8 还引入 family-specific target，使部分特性可以在同一 GPU family 的多个 Compute Capability 间共享。这是 target 表达体系的变化，不属于 TMA 数据操作本身；它决定具体 TMA 变体可向哪些目标开放，下一节单独整理 [S018]。</p>
+<h3 id="blackwell-各-target-的能力分化">1.5.3 Blackwell 各 target 的能力分化</h3>
+<p><img src="assets/06-blackwell-targets.svg" alt="Blackwell 产品分支、Compute Capability、PTX target 与 a/f target 的能力分化" /></p>
+<p>Blackwell 数据中心和 workstation/consumer 产品分布在 CC 10.0、10.3、12.0 与 12.1；同期产品表还列出 CC 11.0 的 Jetson 分支。PTX 对 <code>sm_100/103</code>、<code>sm_110</code> 与 <code>sm_120/121</code> 的指令变体和限制分别定义；<code>a</code> target 和 <code>f</code> target 又提供不同的特性集合 [S011][S018][S023]。</p>
+<p>因此，后续独立文章将把 Blackwell 数据中心、Jetson、workstation/consumer 和 GB10 分支分别映射到具体 target。本文的“Blackwell 功能阶段”表示这一时期出现了确定的 TMA 接口增量，不表示所有相关产品拥有完全相同的 TMA 指令集合 [S018][S023]。</p>
+<h3 id="blackwell-ultra产品与-target-扩展">1.5.4 Blackwell Ultra：产品与 target 扩展</h3>
+<p><img src="assets/07-blackwell-ultra.svg" alt="Blackwell Ultra 的已知产品映射、证据边界和后续验证路径" /></p>
+<p>B300/GB300 是 Blackwell Ultra 产品节点，官方产品表将其映射为 CC 10.3 [S011][S017]。截至本章调研截止日期，公开产品资料没有单独列出 B300/GB300 专属的 TMA 功能。本文先把它归入 Blackwell 功能阶段中的产品与 target 扩展；其实现差异和性能差异需要由 PTX target、SASS 与实测进一步识别。</p>
+<h3 id="rubin运行时-descriptor-override">1.5.5 Rubin：运行时 descriptor override</h3>
+<p><img src="assets/08-rubin-descriptor-override.svg" alt="Rubin 运行时 descriptor override：共享布局模板并在提交时覆盖地址、维度和步长" /></p>
+<p>Rubin 的公开 TMA 增量面向布局相同、内存位置不同的张量。NVIDIA 的 Rubin 架构文章称其为 <strong>inline descriptor update</strong> [S021]：</p>
+<ul>
+<li>多个布局相同的张量可以共享一个 descriptor；</li>
+<li>TMA 指令可以在运行时覆盖 global address；</li>
+<li>指令还可以覆盖 global dimension、stride 等 descriptor 属性；</li>
+<li>MoE kernel 可以减少按 expert 维护或修改 descriptor 的开销。</li>
+</ul>
+<p>PTX 9.4 为 <code>cp.async.bulk.tensor</code>、<code>cp.reduce.async.bulk.tensor</code> 和 <code>cp.async.bulk.prefetch.tensor</code> 增加 <code>.override::global_address</code> 与 <code>.override_attribute</code>，同时增加 eviction priority 和 <code>applypriority.async.bulk*</code> 等相关控制 [S022]。官方 Rubin 文章与 PTX 9.4 分别从产品和 ISA 层描述了相互对应的能力。</p>
+<p>Rubin 因此构成第三个 TMA 功能阶段：TMA 的 descriptor 从提交前固定的内存对象，扩展为可在指令提交时覆盖关键字段的模板。当前产品表尚未把 Rubin GPU 映射到具体 Compute Capability；本文保留该映射空缺，不用 PTX target 反推产品编号 [S011][S022][S023]。</p>
+<h2 id="产品定位与软件使用方式">1.6 产品定位与软件使用方式</h2>
+<h3 id="hoppertile-级异步数据供给">1.6.1 Hopper：tile 级异步数据供给</h3>
+<p>Hopper 以 TMA 降低多维 tile 的地址生成和搬运指令开销，从而为 Tensor Core 和其他计算管线持续提供 shared-memory 数据 [S002]。典型 kernel 采用 producer-consumer 结构：</p>
+<ul>
+<li>producer thread 或 producer warp 提交 TMA；</li>
+<li>consumer warp 执行 WGMMA 或其他计算；</li>
+<li>mbarrier 传递 tile 就绪状态；</li>
+<li>cluster multicast 允许多个 CTA 接收同一份 global-memory 数据。</li>
+</ul>
+<p>这种组织把 tile 搬运控制集中到少量 producer，释放其他线程用于计算。</p>
+<h3 id="blackwell更丰富的数据选择与-kernel-组织">1.6.2 Blackwell：更丰富的数据选择与 kernel 组织</h3>
+<p>Blackwell 延续 TMA-fed、warp-specialized kernel，并通过 gather/scatter、byte mask、CTA-local destination 和新的 target 分类覆盖更多数据布局与 kernel 组织方式 [S018]。NVIDIA 软件资料显示，cuDNN 已在 Blackwell normalization 等场景使用 TMA 改善 HBM bandwidth utilization，CUTLASS 的 SM100 kernel 也继续使用 TMA warp-specialized mainloop 与 epilogue [S025]。</p>
+<p>这些材料确认 TMA 在 Blackwell 软件栈中用于 GEMM 之外的 normalization 等操作。单个 TMA 单元的吞吐、数量和调度方式仍需独立的硬件证据。</p>
+<h3 id="rubin动态-moe-数据定位">1.6.3 Rubin：动态 MoE 数据定位</h3>
+<p>MoE 推理会在运行时把 token 路由到不同 expert。各 expert 的权重张量常具有相同布局而位于不同地址。Rubin inline descriptor update 允许 kernel 复用布局 descriptor，并在 TMA 指令中提交当前 expert 的地址和相关属性，从而减少 descriptor 数量与 metadata management 开销 [S021]。</p>
+<p>从公开功能看，TMA 的演进主线为：</p>
+<blockquote>
+<p>Hopper 建立 tile 级多维异步搬运与地址生成卸载；Blackwell 扩展数据选择、目标空间和 target 覆盖；Rubin 增加运行时 descriptor 字段覆盖与复用。</p>
+</blockquote>
+<h2 id="代际总表">1.7 代际总表</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>阶段</th>
+<th>产品/目标</th>
+<th>对外能力基线或增量</th>
+<th>本章判断</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>技术前身</td>
+<td>Ampere CC 8.0</td>
+<td>小粒度 global-to-shared <code>cp.async</code>，支持寄存器旁路和异步流水</td>
+<td>TMA 的直接前身</td>
+</tr>
+<tr class="even">
+<td>第一功能阶段</td>
+<td>Hopper H100/H200/GH200，CC 9.0</td>
+<td>bulk、1D–5D tensor copy、global/shared 双向传输、cluster copy、multicast、reduction、prefetch、布局属性和异步完成</td>
+<td>TMA 首次公开的硬件能力与编程基线</td>
+</tr>
+<tr class="odd">
+<td>Hopper 产品扩展</td>
+<td>H200、GH200</td>
+<td>HBM3e、容量、带宽及 CPU-GPU 系统形态变化</td>
+<td>沿用首代接口；性能差异待测</td>
+</tr>
+<tr class="even">
+<td>第二功能阶段</td>
+<td>Blackwell-era <code>sm_100/103/110/120/121</code> 目标</td>
+<td>CTA-local destination、byte mask、gather4/scatter4、新 swizzle 表达和 family-specific target</td>
+<td>公共 TMA 能力扩展；硬件实现代际待证</td>
+</tr>
+<tr class="odd">
+<td>Blackwell Ultra 产品扩展</td>
+<td>B300/GB300，CC 10.3</td>
+<td>产品与 target 节点</td>
+<td>归入 Blackwell 功能阶段；专属实现差异待证</td>
+</tr>
+<tr class="even">
+<td>第三功能阶段</td>
+<td>Rubin；具体 CC 映射待官方产品表确认</td>
+<td>inline descriptor update，global address 与 descriptor attribute override</td>
+<td>运行时 descriptor 参数化与复用</td>
+</tr>
+</tbody>
+</table>
+<p>这里的“第一、第二、第三功能阶段”是本文为组织公开能力演进采用的编号。它不等于 NVIDIA 官方命名的 TMA 硬件代数。</p>
+<h2 id="本章结论与证据边界">1.8 本章结论与证据边界</h2>
+<h3 id="已确认结论">1.8.1 已确认结论</h3>
+<ol type="1">
+<li>Hopper/H100 于 2022 年首次公开 TMA；Compute Capability 9.0 是首个 TMA 架构基线 [S001][S002][S014]。</li>
+<li>Ampere <code>cp.async</code> 建立了小粒度、寄存器旁路的异步 global-to-shared 路径；Hopper TMA 在此基础上增加 tile 级描述、硬件地址生成、多维布局和更丰富的数据路径 [S002][S003][S006][S007]。</li>
+<li>CUDA 12.0/PTX 8.0 是首个公开且成体系的 TMA 底层编程接口节点 [S004][S012][S024]。</li>
+<li>Hopper 首代公共能力已经包括一维 bulk、1D–5D tensor copy、global/shared 双向传输、cluster copy、multicast、reduction、prefetch、tensor map 属性和异步完成机制 [S001][S003][S012]。</li>
+<li>H200/GH200 扩展了 Hopper 的产品形态和内存系统；当前资料没有显示专属的 TMA 接口增量 [S011][S015]。</li>
+<li>PTX 8.6–8.8 为 Blackwell 相关 target 增加了明确的 TMA 能力，因此 Blackwell 构成新的 TMA 功能阶段 [S018]。</li>
+<li>Rubin 官方资料确认 enhanced TMA 与 inline descriptor update；PTX 9.4 提供对应的 descriptor override 表达 [S021][S022]。</li>
+</ol>
+<h3 id="尚待后续章节确认">1.8.2 尚待后续章节确认</h3>
+<ul>
+<li>各 PTX TMA 变体在 <code>sm_90</code>、<code>sm_90a</code> 及后续 target 上对应的 SASS 指令；</li>
+<li>H100、H200、B200、B300 和 Rubin 的 TMA 单元数量、队列结构、延迟、吞吐和并发上限；</li>
+<li>Blackwell PTX 增量中哪些来自新硬件，哪些来自已有能力的接口开放或编译映射；</li>
+<li>不同 Blackwell Compute Capability 的 TMA 硬件实现关系；</li>
+<li>Rubin GPU 与 CC 10.7/<code>sm_107</code> 的正式产品映射；</li>
+<li>Rubin descriptor override 的 SASS 编码和硬件应用阶段。</li>
+</ul>
+<h3 id="对后续文章的约束">1.8.3 对后续文章的约束</h3>
+<p><a href="02-hopper-ptx.html">第二章</a>先聚焦 Hopper/PTX 8.0–8.3 的第一代 TMA 设计，展开以下操作族：</p>
+<ul>
+<li><code>cp.async.bulk</code>、<code>cp.reduce.async.bulk</code> 与 bulk prefetch；</li>
+<li><code>cp.async.bulk.tensor</code>、<code>cp.reduce.async.bulk.tensor</code> 与 tensor prefetch；</li>
+<li>tensor map 创建、字段、<code>tensormap.replace</code> 与 instruction-time override；</li>
+<li>mbarrier、bulk async-group、async proxy 与 proxy fence；</li>
+<li>PTX 8.0 首发能力、PTX 8.3 的 descriptor 更新能力及 Hopper target requirements。</li>
+</ul>
+<p>Blackwell 的 PTX 8.6–8.8 增量与 Rubin 的 PTX 9.4 descriptor override 将作为后续独立文章展开，不在第二章中预告为已经覆盖。再后续的文章会把 PTX 变体映射到 SASS，并结合官方硬件资料、专利和性能实验判断 TMA 的内部实现与硬件代际。</p>
+<h2 id="关键结论的证据等级">1.9 关键结论的证据等级</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>关键结论</th>
+<th>直接证据</th>
+<th>证据等级</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Hopper/H100 首次公开 TMA</td>
+<td>Hopper 架构文章与 H100 发布资料 [S002][S014]</td>
+<td>已确认</td>
+</tr>
+<tr class="even">
+<td>CC 9.0 是首个 TMA 架构基线</td>
+<td>CUDA Programming Guide 与 Hopper Tuning Guide [S001][S003]</td>
+<td>已确认</td>
+</tr>
+<tr class="odd">
+<td>CUDA 12.0/PTX 8.0 首次公开 bulk/TMA PTX</td>
+<td>CUDA 12.0 Release Notes 与 PTX 8.0 [S004][S012][S024]</td>
+<td>已确认</td>
+</tr>
+<tr class="even">
+<td>H200/GH200 沿用 Hopper TMA 接口</td>
+<td>产品—CC 映射与 H200 产品资料 [S011][S015]</td>
+<td>已确认产品归属；实现性能待测</td>
+</tr>
+<tr class="odd">
+<td>Blackwell 出现 TMA 功能增量</td>
+<td>PTX 8.6–8.8 指令与 target 变更 [S018]</td>
+<td>已确认功能变化；硬件变化待证</td>
+</tr>
+<tr class="even">
+<td>Rubin 增加 inline descriptor update</td>
+<td>Rubin 架构文章与 PTX 9.4 [S021][S022]</td>
+<td>已确认</td>
+</tr>
+<tr class="odd">
+<td>Rubin 对应 CC 10.7/<code>sm_107</code></td>
+<td>PTX 特征和 family 表提供关联线索，产品表暂无映射 [S011][S022][S023]</td>
+<td>未确认</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><a href="index.html">返回系列目录</a> · <a href="02-hopper-ptx.html">继续阅读第二章：Hopper 第一代 TMA 的 PTX 设计</a> · <a href="references.html">参考资料索引</a></p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-20<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/01-overview.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

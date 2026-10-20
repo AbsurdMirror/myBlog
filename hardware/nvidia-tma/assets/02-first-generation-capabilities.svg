@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:24px;font-weight:700}.b{font-size:20px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="70" class="t">Hopper 首代 TMA：公共能力基线</text>
+<rect x="625" y="105" width="350" height="90" class="box orange"/>
+<text x="800" y="145" class="h" text-anchor="middle">PTX 8.0 / Hopper</text>
+<text x="800" y="178" class="b" text-anchor="middle">后续代际比较的共同起点</text>
+<path d="M800 195 L800 240 M800 240 L205 240 M800 240 L1395 240" class="line"/>
+<g>
+<rect x="60" y="270" width="280" height="240" class="box blue"/>
+<text x="200" y="312" class="h" text-anchor="middle">搬运形态</text>
+<text x="85" y="360" class="b">• 1D 连续 bulk copy</text><text x="85" y="405" class="b">• 1D–5D tensor copy</text><text x="85" y="450" class="b">• tile / im2col</text>
+<rect x="360" y="270" width="280" height="240" class="box green"/>
+<text x="500" y="312" class="h" text-anchor="middle">传输方向</text>
+<text x="385" y="360" class="b">• global → shared</text><text x="385" y="405" class="b">• shared → global</text><text x="385" y="450" class="b">• cluster shared → shared</text>
+<rect x="660" y="270" width="280" height="240" class="box pink"/>
+<text x="800" y="312" class="h" text-anchor="middle">Cluster 分发</text>
+<text x="685" y="365" class="b">global → cluster shared</text><text x="685" y="410" class="b">multicast</text><text x="685" y="455" class="b">一次提交，多 CTA 接收</text>
+<rect x="960" y="270" width="280" height="240" class="box purple"/>
+<text x="1100" y="312" class="h" text-anchor="middle">数据操作</text>
+<text x="985" y="365" class="b">• element-wise reduction</text><text x="985" y="410" class="b">• tensor prefetch</text><text x="985" y="455" class="b">• L2 cache hint</text>
+<rect x="1260" y="270" width="280" height="240" class="box orange"/>
+<text x="1400" y="312" class="h" text-anchor="middle">完成机制</text>
+<text x="1285" y="365" class="b">• mbarrier-based</text><text x="1285" y="410" class="b">• bulk async-group</text><text x="1285" y="455" class="b">按方向 / 变体选择</text>
+</g>
+<rect x="130" y="570" width="1340" height="225" class="box"/>
+<text x="170" y="620" class="h">Tensor Map 同时描述寻址、布局与边界策略</text>
+<path d="M170 650 L1430 650" class="line"/>
+<rect x="180" y="685" width="220" height="62" class="box blue"/><text x="290" y="724" class="b" text-anchor="middle">stride / box</text>
+<rect x="430" y="685" width="220" height="62" class="box green"/><text x="540" y="724" class="b" text-anchor="middle">interleave</text>
+<rect x="680" y="685" width="220" height="62" class="box orange"/><text x="790" y="724" class="b" text-anchor="middle">swizzle</text>
+<rect x="930" y="685" width="220" height="62" class="box pink"/><text x="1040" y="724" class="b" text-anchor="middle">OOB fill</text>
+<rect x="1180" y="685" width="220" height="62" class="box purple"/><text x="1290" y="724" class="b" text-anchor="middle">L2 promotion</text>
+</svg>

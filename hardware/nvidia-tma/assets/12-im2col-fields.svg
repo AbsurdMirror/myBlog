@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>
+text{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#243238}.t{font-size:38px;font-weight:700}.h{font-size:25px;font-weight:700}.b{font-size:20px}.s{font-size:17px}.box{fill:#fffdf7;stroke:#425b61;stroke-width:3;rx:22}.blue{fill:#dff1f5}.green{fill:#e4f3df}.orange{fill:#fde7c7}.pink{fill:#f7e2e4}.purple{fill:#ece5f6}.line{stroke:#425b61;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}.dash{stroke-dasharray:11 9}
+</style>
+<rect width="1600" height="900" fill="#fbf8ef"/>
+<text x="70" y="66" class="t">Im2col descriptor：空间窗口如何展开成一列</text>
+
+<rect x="55" y="110" width="820" height="690" class="box blue"/>
+<text x="465" y="154" class="h" text-anchor="middle">NHWC 示例：HW 空间中的 Bounding Box</text>
+<g fill="#fffdf7" stroke="#789096" stroke-width="2">
+<rect x="175" y="220" width="540" height="450"/>
+<path d="M265 220V670 M355 220V670 M445 220V670 M535 220V670 M625 220V670"/>
+<path d="M175 310H715 M175 400H715 M175 490H715 M175 580H715"/>
+</g>
+<rect x="265" y="310" width="270" height="270" fill="#fde7c7" fill-opacity="0.7" stroke="#425b61" stroke-width="5" rx="10"/>
+<circle cx="400" cy="445" r="18" fill="#d77d67" stroke="#425b61" stroke-width="3"/>
+<text x="400" y="451" class="s" text-anchor="middle" fill="#fffdf7">B</text>
+<text x="420" y="474" class="s">filter base</text>
+<circle cx="265" cy="310" r="10" fill="#425b61"/>
+<circle cx="535" cy="580" r="10" fill="#425b61"/>
+<rect x="92" y="255" width="260" height="82" class="box pink"/>
+<text x="222" y="288" class="b" text-anchor="middle">pixelBoxLowerCorner</text>
+<text x="222" y="318" class="s" text-anchor="middle">相对 base 的最小坐标 offset</text>
+<rect x="535" y="600" width="292" height="82" class="box green"/>
+<text x="681" y="633" class="b" text-anchor="middle">pixelBoxUpperCorner</text>
+<text x="681" y="663" class="s" text-anchor="middle">相对 base 的最大坐标 offset</text>
+<path d="M535 580L560 600" class="line"/>
+<text x="465" y="718" class="s" text-anchor="middle">corner 只规定 DHW 坐标边界，不规定访问元素数量</text>
+<text x="465" y="750" class="s" text-anchor="middle">3D / 4D / 5D descriptor 分别提供 W / HW / DHW 分量</text>
+
+<path d="M875 445H990" class="line"/><path d="M974 433L990 445L974 457" class="line"/>
+<text x="933" y="420" class="s" text-anchor="middle">im2col 访问</text>
+
+<rect x="990" y="110" width="555" height="690" class="box green"/>
+<text x="1267" y="154" class="h" text-anchor="middle">生成的一个 column</text>
+<text x="1267" y="187" class="s" text-anchor="middle">空间 pixel 依次排列，每个 pixel 带若干 C channel</text>
+
+<g stroke="#425b61" stroke-width="2">
+<rect x="1100" y="235" width="330" height="58" fill="#dff1f5"/>
+<rect x="1100" y="293" width="330" height="58" fill="#fde7c7"/>
+<rect x="1100" y="351" width="330" height="58" fill="#e4f3df"/>
+<rect x="1100" y="409" width="330" height="58" fill="#f7e2e4"/>
+<rect x="1100" y="467" width="330" height="58" fill="#ece5f6"/>
+</g>
+<text x="1125" y="272" class="b">pixel 0：C₀ · C₁ · … · Cₖ</text>
+<text x="1125" y="330" class="b">pixel 1：C₀ · C₁ · … · Cₖ</text>
+<text x="1125" y="388" class="b">pixel 2：C₀ · C₁ · … · Cₖ</text>
+<text x="1125" y="446" class="b">pixel 3：C₀ · C₁ · … · Cₖ</text>
+<text x="1265" y="504" class="b" text-anchor="middle">…</text>
+
+<rect x="1050" y="555" width="435" height="82" class="box purple"/>
+<text x="1267" y="588" class="h" text-anchor="middle">channelsPerPixel</text>
+<text x="1267" y="619" class="s" text-anchor="middle">每个空间 pixel 贡献的 C 维 channel 数</text>
+<rect x="1050" y="660" width="435" height="82" class="box orange"/>
+<text x="1267" y="693" class="h" text-anchor="middle">pixelsPerColumn</text>
+<text x="1267" y="716" class="s" text-anchor="middle">本列在 NDHW 维访问的</text>
+<text x="1267" y="739" class="s" text-anchor="middle">元素总数</text>
+
+<rect x="235" y="832" width="1130" height="48" class="box"/>
+<text x="800" y="863" class="s" text-anchor="middle">corner 定义 DHW 边界；pixelsPerColumn 定义 NDHW 访问数；channelsPerPixel 定义每个 pixel 的 C 维访问数</text>
+</svg>
