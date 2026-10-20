@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "188136f338db3af990c31679cf41d32ecee3312e",
-  "built_utc": "2026-10-20T07:47:14.213123+00:00",
+  "source_commit": "03f8455d0745a45c116a40c05628aa8cf414bf15",
+  "built_utc": "2026-10-20T08:44:14.715733+00:00",
   "pages": [
     "index.html",
     "hardware/nvidia-tma/index.html",
@@ -153,8 +153,8 @@
       "bytes": 224710
     },
     "models/deepseek-v4.1-flash/03-layer1.html": {
-      "sha256": "c97c8e8a5e46cbf29bee08f829867efb6c578e91d1a95dd799e2c1916f7d33ba",
-      "bytes": 100004
+      "sha256": "3a9e1585349da295186b90faeea12c85d758f4ab639ea18d46367ac34401a750",
+      "bytes": 116047
     },
     "models/deepseek-v4.1-flash/index.html": {
       "sha256": "2f7eef068d6c079394690f7466b0aaf9d6c4e18607b65713cc642312a75d8621",
