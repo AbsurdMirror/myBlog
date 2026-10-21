@@ -1,7 +1,7 @@
 ---
 title: NVIDIA TMA 调研参考资料索引
 status: published
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 # NVIDIA TMA 调研参考资料索引
@@ -42,6 +42,16 @@ updated: 2026-10-20
 - **S031** — [PTX ISA 8.8：Hopper `tensormap.replace` 与 Proxy 操作](https://docs.nvidia.com/cuda/archive/12.9.1/parallel-thread-execution/index.html)
 - **S032** — [PTX ISA 8.3：Memory Hierarchy with Clusters](https://docs.nvidia.com/cuda/archive/12.3.2/parallel-thread-execution/index.html#memory-hierarchy)
 
+## 第三章引用
+
+- **S034** — [PTX ISA 8.7：Blackwell TMA 指令与 tensor mode 语义](https://docs.nvidia.com/cuda/archive/12.8.0/parallel-thread-execution/index.html)
+- **S035** — [PTX ISA 8.8：family-specific target、sub-byte type 与 96 B swizzle](https://docs.nvidia.com/cuda/archive/12.9.2/parallel-thread-execution/index.html)
+- **S036** — [PTX ISA 9.0–9.3：target 更名、`.ignore_oob` 与 memory semantics](https://docs.nvidia.com/cuda/archive/13.3.0/parallel-thread-execution/index.html)
+- **S037** — [PTX ISA 9.4：Tensor Property Override](https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-asynchronous-copy)
+- **S038** — [PTX ISA 9.4：Report、32-bit Multicast 与 Cache Priority](https://docs.nvidia.com/cuda/parallel-thread-execution/#completion-mechanisms-for-asynchronous-copy-operations)
+- **S039** — [CUDA Driver API 12.8：Blackwell Tensor Map 编码接口](https://docs.nvidia.com/cuda/archive/12.8.2/cuda-driver-api/group__CUDA__TENSOR__MEMORY.html)
+- **S040** — [CUDA Core Compute Libraries：`cp.async.bulk.tensor`](https://nvidia.github.io/cccl/unstable/libcudacxx/ptx/instructions/cp_async_bulk_tensor.html)、[LLVM NVPTX Backend User Guide](https://llvm.org/docs/NVPTXUsage.html)
+
 ---
 
-[返回 TMA 系列目录](index.md) · [第一章](01-overview.md) · [第二章](02-hopper-ptx.md)
+[返回 TMA 系列目录](index.md) · [第一章](01-overview.md) · [第二章](02-hopper-ptx.md) · [第三章](03-blackwell-rubin-ptx.md)

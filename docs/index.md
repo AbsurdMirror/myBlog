@@ -1,7 +1,7 @@
 ---
 title: 图解技术笔记
 status: published
-updated: 2026-10-14
+updated: 2026-10-21
 ---
 
 # 图解技术笔记
@@ -14,7 +14,7 @@ updated: 2026-10-14
 
 [阅读 NVIDIA TMA 调研系列](hardware/nvidia-tma/index.md)
 
-前两章已经发布：先从 Ampere、Hopper、Blackwell 到 Rubin 建立 TMA 产品与能力演进地图，再深入 Hopper 第一代 Tensor Map、bulk/tensor copy、完成机制与 descriptor proxy 的 PTX 设计。
+前三章已经发布：先从 Ampere、Hopper、Blackwell 到 Rubin 建立 TMA 产品与能力演进地图，再依次深入 Hopper 第一代接口与 PTX 8.6–9.4 的后续演进。
 
 ## 模型解析
 

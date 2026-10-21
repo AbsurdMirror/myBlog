@@ -509,4 +509,4 @@ fence.proxy.tensormap::generic.acquire.scope [addr], 128;
 
 ---
 
-[返回系列目录](index.md) · [上一篇：NVIDIA 产品迭代与 TMA 概述](01-overview.md) · [参考资料索引](references.md)
+[返回系列目录](index.md) · [上一篇：NVIDIA 产品迭代与 TMA 概述](01-overview.md) · [下一篇：Blackwell 与 Rubin 的 TMA PTX 演进](03-blackwell-rubin-ptx.md) · [参考资料索引](references.md)
