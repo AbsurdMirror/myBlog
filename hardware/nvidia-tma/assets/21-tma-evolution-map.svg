@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1260" viewBox="0 0 1920 1260">
+  <defs>
+    <style>
+      .cn{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;fill:#26343d}
+      .code{font-family:Consolas,"Microsoft YaHei",monospace;fill:#26343d}
+      .title{font-size:40px;font-weight:700}.sub{font-size:19px;fill:#65737c}
+      .axis{font-size:21px;font-weight:700}.row{font-size:22px;font-weight:700}
+      .col1{fill:#3f78a8}.col2{fill:#db7a32}.col3{fill:#3195a8}.col4{fill:#7d5baa}
+      .cell{font-size:17px}.feature{font-size:18px;font-weight:500}.small{font-size:15px}.tiny{font-size:14px}
+      .grid{stroke:#d9d4ca;stroke-width:2}.guide{stroke:#c9c3b8;stroke-width:3;stroke-linecap:round}
+      .stem{stroke-width:2;stroke-dasharray:5 5}.new{stroke:#fbf8f1;stroke-width:4}.expand{stroke:#fbf8f1;stroke-width:3}
+    </style>
+    <marker id="axis-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#7d878d"/>
+    </marker>
+  </defs>
+
+  <rect width="1920" height="1180" fill="#fbf8f1"/>
+  <text x="960" y="62" text-anchor="middle" class="cn title">TMA 能力的 PTX 与架构演进</text>
+  <text x="960" y="96" text-anchor="middle" class="cn sub">横向看版本增加了什么，纵向看同一能力如何延伸</text>
+
+  <!-- column bands -->
+  <rect x="350" y="132" width="350" height="1024" rx="20" fill="#eaf2f8" opacity=".72"/>
+  <rect x="710" y="132" width="350" height="1024" rx="20" fill="#fff0e3" opacity=".72"/>
+  <rect x="1070" y="132" width="350" height="1024" rx="20" fill="#e7f5f6" opacity=".72"/>
+  <rect x="1430" y="132" width="350" height="1024" rx="20" fill="#f1ebf8" opacity=".72"/>
+
+  <!-- x axis: architecture + PTX -->
+  <text x="195" y="160" text-anchor="middle" class="cn axis">架构 / PTX</text>
+  <line x1="330" y1="188" x2="1810" y2="188" stroke="#7d878d" stroke-width="3" marker-end="url(#axis-arrow)"/>
+
+  <circle cx="525" cy="188" r="10" class="col1"/>
+  <text x="525" y="151" text-anchor="middle" class="cn axis col1">Hopper</text>
+  <text x="525" y="178" text-anchor="middle" class="code small">PTX 8.0–8.3</text>
+
+  <circle cx="885" cy="188" r="10" class="col2"/>
+  <text x="885" y="151" text-anchor="middle" class="cn axis col2">Blackwell</text>
+  <text x="885" y="178" text-anchor="middle" class="code small">PTX 8.6–9.0</text>
+
+  <circle cx="1245" cy="188" r="10" class="col3"/>
+  <text x="1245" y="151" text-anchor="middle" class="cn axis col3">PTX 通用扩展</text>
+  <text x="1245" y="178" text-anchor="middle" class="code small">PTX 9.2–9.3</text>
+
+  <circle cx="1605" cy="188" r="10" class="col4"/>
+  <text x="1605" y="151" text-anchor="middle" class="cn axis col4">Rubin / sm_107f</text>
+  <text x="1605" y="178" text-anchor="middle" class="code small">PTX 9.4</text>
+
+  <!-- y axis -->
+  <line x1="330" y1="205" x2="330" y2="1172" stroke="#7d878d" stroke-width="3" marker-end="url(#axis-arrow)"/>
+  <text x="56" y="665" transform="rotate(-90 56 665)" text-anchor="middle" class="cn axis">TMA 能力维度</text>
+
+  <!-- Row 1 -->
+  <text x="290" y="282" text-anchor="end" class="cn row">描述符与动态寻址</text>
+  <line x1="365" y1="340" x2="1745" y2="340" class="guide"/>
+  <circle cx="525" cy="340" r="11" class="col1 new"/>
+  <path d="M885 328 l12 12 -12 12 -12 -12 Z" class="col2 expand"/>
+  <path d="M1605 328 l12 12 -12 12 -12 -12 Z" class="col4 expand"/>
+  <text x="430" y="266" class="cn feature"><tspan x="430">• Tiled descriptor</tspan><tspan x="430" dy="24">• Im2col descriptor</tspan><tspan x="430" dy="24">• 基础 swizzle</tspan></text>
+  <text x="765" y="242" class="cn feature"><tspan x="765">• W-only Im2col</tspan><tspan x="765" dy="24">• packed sub-byte type</tspan><tspan x="765" dy="24">• atomic swizzle</tspan><tspan x="765" dy="24">• 96 B swizzle</tspan></text>
+  <text x="1490" y="266" class="cn feature"><tspan x="1490">• override global address</tspan><tspan x="1490" dy="24">• override dimension</tspan><tspan x="1490" dy="24">• override stride</tspan></text>
+
+  <!-- Row 2 -->
+  <line x1="84" y1="380" x2="1780" y2="380" class="grid"/>
+  <text x="290" y="474" text-anchor="end" class="cn row"><tspan x="290">数据选择与</tspan><tspan x="290" dy="27">形状变换</tspan></text>
+  <line x1="365" y1="550" x2="1745" y2="550" class="guide"/>
+  <circle cx="525" cy="550" r="11" class="col1 new"/>
+  <path d="M885 538 l12 12 -12 12 -12 -12 Z" class="col2 expand"/>
+  <path d="M1605 538 l12 12 -12 12 -12 -12 Z" class="col4 expand"/>
+  <text x="450" y="476" class="cn feature"><tspan x="450">• Tile copy</tspan><tspan x="450" dy="24">• Im2col load</tspan><tspan x="450" dy="24">• 连续 tile</tspan></text>
+  <text x="820" y="428" class="cn feature"><tspan x="820">• gather4</tspan><tspan x="820" dy="24">• scatter4</tspan><tspan x="820" dy="24">• byte mask</tspan><tspan x="820" dy="24">• W-only load</tspan><tspan x="820" dy="24">• no-offset</tspan></text>
+  <text x="1480" y="500" class="cn feature"><tspan x="1480">• W-only no-offset store</tspan><tspan x="1480" dy="24">• W-only no-offset reduce</tspan></text>
+
+  <!-- Row 3 -->
+  <line x1="84" y1="580" x2="1780" y2="580" class="grid"/>
+  <text x="290" y="635" text-anchor="end" class="cn row"><tspan x="290">搬运方向与</tspan><tspan x="290" dy="27">存储空间</tspan></text>
+  <line x1="365" y1="680" x2="1745" y2="680" class="guide"/>
+  <circle cx="525" cy="680" r="11" class="col1 new"/>
+  <path d="M885 668 l12 12 -12 12 -12 -12 Z" class="col2 expand"/>
+  <text x="395" y="640" class="code feature"><tspan x="395">• global → shared::cluster</tspan><tspan x="395" dy="24">• shared::cta → global</tspan></text>
+  <text x="755" y="664" class="code feature">• .shared::cta destination</text>
+
+  <!-- Row 4 -->
+  <line x1="84" y1="710" x2="1780" y2="710" class="grid"/>
+  <text x="290" y="765" text-anchor="end" class="cn row"><tspan x="290">CTA 与 Cluster</tspan><tspan x="290" dy="27">协作</tspan></text>
+  <line x1="365" y1="815" x2="1745" y2="815" class="guide"/>
+  <circle cx="525" cy="815" r="11" class="col1 new"/>
+  <path d="M885 803 l12 12 -12 12 -12 -12 Z" class="col2 expand"/>
+  <path d="M1605 803 l12 12 -12 12 -12 -12 Z" class="col4 expand"/>
+  <text x="430" y="767" class="cn feature"><tspan x="430">• multicast</tspan><tspan x="430" dy="24">• mbarrier 完成通知</tspan></text>
+  <text x="785" y="767" class="cn feature"><tspan x="785">• CTA-pair 路由</tspan><tspan x="785" dy="24" class="code">• .cta_group::2</tspan></text>
+  <text x="1470" y="767" class="cn feature"><tspan x="1470">• 32-bit multicast mask</tspan><tspan x="1470" dy="24" class="code">• .multicast::cluster::32b</tspan></text>
+
+  <!-- Row 5: one category, four sub-lanes -->
+  <line x1="84" y1="840" x2="1780" y2="840" class="grid"/>
+  <text x="112" y="982" text-anchor="middle" class="cn row"><tspan x="112">搬运控制与</tspan><tspan x="112" dy="27">附加语义</tspan></text>
+
+  <text x="315" y="895" text-anchor="end" class="cn small">边界控制</text>
+  <line x1="365" y1="890" x2="1745" y2="890" class="guide"/>
+  <circle cx="525" cy="890" r="9" class="col1 new"/>
+  <path d="M1245 880 l10 10 -10 10 -10 -10 Z" class="col3 expand"/>
+  <text x="440" y="870" class="cn feature">• descriptor OOB</text>
+  <text x="1170" y="870" class="code feature">• .ignore_oob</text>
+
+  <text x="315" y="975" text-anchor="end" class="cn small">完成与内存语义</text>
+  <line x1="365" y1="970" x2="1745" y2="970" class="guide"/>
+  <circle cx="525" cy="970" r="9" class="col1 new"/>
+  <path d="M1245 960 l10 10 -10 10 -10 -10 Z" class="col3 expand"/>
+  <text x="425" y="930" class="cn feature"><tspan x="425">• bulk async-group</tspan><tspan x="425" dy="22">• mbarrier</tspan></text>
+  <text x="1165" y="906" class="code feature"><tspan x="1165">• .weak</tspan><tspan x="1165" dy="22">• .relaxed.scope</tspan><tspan x="1165" dy="22">• .b128</tspan></text>
+
+  <text x="315" y="1055" text-anchor="end" class="cn small">有效性报告</text>
+  <line x1="365" y1="1050" x2="1745" y2="1050" class="guide"/>
+  <circle cx="1605" cy="1050" r="9" class="col4 new"/>
+  <text x="1510" y="1010" class="cn feature"><tspan x="1510">• −0 / NaN 检测</tspan><tspan x="1510" dy="22">• report predicate</tspan></text>
+
+  <text x="315" y="1135" text-anchor="end" class="cn small">缓存控制</text>
+  <line x1="365" y1="1130" x2="1745" y2="1130" class="guide"/>
+  <circle cx="525" cy="1130" r="9" class="col1 new"/>
+  <path d="M1605 1120 l10 10 -10 10 -10 -10 Z" class="col4 expand"/>
+  <text x="445" y="1090" class="cn feature"><tspan x="445">• cache policy</tspan><tspan x="445" dy="22">• L2 prefetch</tspan></text>
+  <text x="1510" y="1066" class="cn feature"><tspan x="1510">• evict_last</tspan><tspan x="1510" dy="22">• evict_normal</tspan><tspan x="1510" dy="22">• applypriority</tspan></text>
+
+  <!-- legend -->
+  <circle cx="700" cy="1215" r="9" fill="#536874" class="new"/>
+  <text x="720" y="1221" class="cn small">首次出现</text>
+  <path d="M862 1205 l10 10 -10 10 -10 -10 Z" fill="#536874" class="expand"/>
+  <text x="882" y="1221" class="cn small">已有能力扩展</text>
+  <line x1="1055" y1="1215" x2="1115" y2="1215" class="guide"/>
+  <text x="1130" y="1221" class="cn small">能力持续存在</text>
+</svg>

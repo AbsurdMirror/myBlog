@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="720" viewBox="0 0 1400 720">
+  <defs>
+    <style>
+      text{font-family:"Microsoft YaHei","Noto Sans SC",sans-serif;fill:#25343a}.title{font-size:30px;font-weight:700}.head{font-size:24px;font-weight:700}.body{font-size:17px}.small{font-size:15px;fill:#52646c}
+      .panel{stroke-width:2.5;rx:24;ry:24}.grid{stroke:#6d7e84;stroke-width:1.5}.sel{fill:#f7c98b;stroke:#a56820;stroke-width:2}.tile{fill:#b8ddcc;stroke:#3f8062;stroke-width:2.5}.arrow{stroke:#53676d;stroke-width:4;fill:none;stroke-linecap:round}
+    </style>
+    <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M0 0L11 5.5L0 11Z" fill="#53676d"/></marker>
+  </defs>
+  <rect width="1400" height="720" fill="#fbfaf6"/>
+  <text x="700" y="50" text-anchor="middle" class="title">四个不连续 global rows 与一个连续 shared tile</text>
+
+  <g transform="translate(55,85)">
+    <rect width="620" height="560" fill="#eef6f1" stroke="#74a68a" class="panel"/>
+    <text x="310" y="42" text-anchor="middle" class="head">gather4：global → shared</text>
+    <text x="310" y="70" text-anchor="middle" class="small">四行收集为一个连续 2D tile</text>
+    <g transform="translate(55,105)">
+      <text x="150" y="-15" text-anchor="middle" class="body">Global tensor（2D）</text>
+      <rect width="300" height="290" fill="#fff" stroke="#6d7e84" stroke-width="2"/>
+      <g class="grid">
+        <path d="M0 29H300M0 58H300M0 87H300M0 116H300M0 145H300M0 174H300M0 203H300M0 232H300M0 261H300"/>
+        <path d="M50 0V290M100 0V290M150 0V290M200 0V290M250 0V290"/>
+      </g>
+      <rect x="50" y="29" width="200" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/><rect x="50" y="87" width="200" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/>
+      <rect x="50" y="174" width="200" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/><rect x="50" y="261" width="200" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/>
+      <text x="275" y="50" class="small">r0</text><text x="275" y="108" class="small">r1</text><text x="275" y="195" class="small">r2</text><text x="275" y="282" class="small">r3</text>
+    </g>
+    <path d="M375 250C430 250 435 330 475 330" class="arrow" fill="none" stroke="#53676d" stroke-width="4" marker-end="url(#arr)"/>
+    <text x="430" y="238" text-anchor="middle" class="body">TMA</text>
+    <g transform="translate(410,355)">
+      <text x="90" y="-18" text-anchor="middle" class="body">Shared tile</text>
+      <rect width="180" height="120" class="tile" fill="#b8ddcc" stroke="#3f8062"/>
+      <path d="M0 30H180M0 60H180M0 90H180" class="grid"/>
+      <text x="196" y="22" class="small">r0</text><text x="196" y="52" class="small">r1</text><text x="196" y="82" class="small">r2</text><text x="196" y="112" class="small">r3</text>
+    </g>
+    <text x="310" y="525" text-anchor="middle" class="small">坐标：{col, row0, row1, row2, row3}</text>
+  </g>
+
+  <g transform="translate(725,85)">
+    <rect width="620" height="560" fill="#f5f1fb" stroke="#927bb6" class="panel"/>
+    <text x="310" y="42" text-anchor="middle" class="head">scatter4：shared → global</text>
+    <text x="310" y="70" text-anchor="middle" class="small">一个连续 2D tile 分散写入四行</text>
+    <g transform="translate(35,205)">
+      <text x="90" y="-18" text-anchor="middle" class="body">Shared tile</text>
+      <rect width="180" height="120" class="tile" fill="#b8ddcc" stroke="#3f8062"/>
+      <path d="M0 30H180M0 60H180M0 90H180" class="grid"/>
+      <text x="-28" y="22" class="small">r0</text><text x="-28" y="52" class="small">r1</text><text x="-28" y="82" class="small">r2</text><text x="-28" y="112" class="small">r3</text>
+    </g>
+    <path d="M240 265C285 265 300 250 345 250" class="arrow" fill="none" stroke="#53676d" stroke-width="4" marker-end="url(#arr)"/>
+    <text x="290" y="234" text-anchor="middle" class="body">TMA</text>
+    <g transform="translate(315,105)">
+      <text x="150" y="-15" text-anchor="middle" class="body">Global tensor（2D）</text>
+      <rect width="260" height="290" fill="#fff" stroke="#6d7e84" stroke-width="2"/>
+      <g class="grid"><path d="M0 29H260M0 58H260M0 87H260M0 116H260M0 145H260M0 174H260M0 203H260M0 232H260M0 261H260"/><path d="M52 0V290M104 0V290M156 0V290M208 0V290"/></g>
+      <rect x="52" y="29" width="156" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/><rect x="52" y="87" width="156" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/>
+      <rect x="52" y="174" width="156" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/><rect x="52" y="261" width="156" height="29" class="sel" fill="#f7c98b" stroke="#a56820"/>
+      <text x="220" y="50" class="small">r0</text><text x="220" y="108" class="small">r1</text><text x="220" y="195" class="small">r2</text><text x="220" y="282" class="small">r3</text>
+    </g>
+    <text x="310" y="525" text-anchor="middle" class="small">同一套五个坐标，数据方向相反</text>
+  </g>
+  <text x="700" y="692" text-anchor="middle" class="small">两种 mode 均只支持 2D；每个 box 的行高为 1，interleave layout 不可用</text>
+</svg>

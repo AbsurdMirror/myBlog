@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="700" viewBox="0 0 1400 700">
+  <defs>
+    <style>
+      text{font-family:"Microsoft YaHei","Noto Sans SC",sans-serif;fill:#26363c}.title{font-size:30px;font-weight:700}.head{font-size:22px;font-weight:700}.body{font-size:17px}.small{font-size:15px;fill:#56676e}.mono{font-family:Consolas,"Microsoft YaHei",monospace;font-size:16px}
+      .box{stroke-width:2.5;rx:18;ry:18}.arrow{stroke:#52666d;stroke-width:4;fill:none;stroke-linecap:round}.muted{stroke:#9aa7aa;stroke-width:2;stroke-dasharray:8 7}.cross{stroke:#c65e55;stroke-width:4;stroke-linecap:round}
+    </style>
+    <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M0 0L11 5.5L0 11Z" fill="#52666d"/></marker>
+  </defs>
+  <rect width="1400" height="700" fill="#fbfaf6"/>
+  <text x="700" y="50" text-anchor="middle" class="title">PTX 9.4：descriptor 保留静态布局，指令覆盖动态 tensor view</text>
+
+  <rect x="60" y="105" width="360" height="470" fill="#eef5f0" stroke="#5f9275" class="box"/>
+  <text x="240" y="143" text-anchor="middle" class="head">Tensor map</text>
+  <text x="95" y="185" class="body">global address</text><rect x="270" y="164" width="105" height="30" fill="#f7dddd" stroke="#c65e55" rx="7"/>
+  <line x1="278" y1="170" x2="367" y2="188" class="cross"/><line x1="367" y1="170" x2="278" y2="188" class="cross"/>
+  <text x="95" y="235" class="body">global dimensions</text><rect x="270" y="214" width="105" height="30" fill="#f7dddd" stroke="#c65e55" rx="7"/>
+  <line x1="278" y1="220" x2="367" y2="238" class="cross"/><line x1="367" y1="220" x2="278" y2="238" class="cross"/>
+  <text x="95" y="285" class="body">global strides</text><rect x="270" y="264" width="105" height="30" fill="#f7dddd" stroke="#c65e55" rx="7"/>
+  <line x1="278" y1="270" x2="367" y2="288" class="cross"/><line x1="367" y1="270" x2="278" y2="288" class="cross"/>
+  <path d="M90 318H390" class="muted"/>
+  <text x="95" y="355" class="body">box / element stride</text>
+  <text x="95" y="397" class="body">element type</text>
+  <text x="95" y="439" class="body">interleave / swizzle</text>
+  <text x="95" y="481" class="body">fill / layout attributes</text>
+  <rect x="84" y="513" width="312" height="42" fill="#d9ebdf" stroke="#5f9275" rx="10"/>
+  <text x="240" y="540" text-anchor="middle" class="small">未覆盖字段继续由 descriptor 提供</text>
+
+  <rect x="500" y="105" width="400" height="300" fill="#fff1cd" stroke="#c08b2b" class="box"/>
+  <text x="700" y="143" text-anchor="middle" class="head">本条 PTX 的动态操作数</text>
+  <rect x="535" y="175" width="330" height="50" fill="#fff9e8" stroke="#c08b2b" rx="10"/><text x="700" y="206" text-anchor="middle" class="mono">gAddrToOverride : b64</text>
+  <rect x="535" y="245" width="330" height="50" fill="#fff9e8" stroke="#c08b2b" rx="10"/><text x="700" y="276" text-anchor="middle" class="mono">tensorSizeToOverride</text>
+  <rect x="535" y="315" width="330" height="64" fill="#fff9e8" stroke="#c08b2b" rx="10"/><text x="700" y="343" text-anchor="middle" class="mono">lowerStride[] + upperStride</text><text x="700" y="366" text-anchor="middle" class="small">stride 以 16 B 为单位恢复</text>
+
+  <path d="M900 255C970 255 970 315 1035 315" class="arrow" fill="none" stroke="#52666d" stroke-width="4" marker-end="url(#arr)"/>
+  <path d="M420 440C710 520 920 470 1035 390" class="arrow" fill="none" stroke="#52666d" stroke-width="4" marker-end="url(#arr)"/>
+
+  <rect x="1035" y="190" width="305" height="330" fill="#e8e5f6" stroke="#7565a4" class="box"/>
+  <text x="1187" y="230" text-anchor="middle" class="head">本次有效 tensor view</text>
+  <rect x="1075" y="265" width="225" height="50" fill="#f7f5ff" stroke="#7565a4" rx="10"/><text x="1187" y="296" text-anchor="middle" class="body">动态 base address</text>
+  <rect x="1075" y="335" width="225" height="50" fill="#f7f5ff" stroke="#7565a4" rx="10"/><text x="1187" y="366" text-anchor="middle" class="body">动态 dimensions / strides</text>
+  <rect x="1075" y="405" width="225" height="76" fill="#f7f5ff" stroke="#7565a4" rx="10"/><text x="1187" y="435" text-anchor="middle" class="body">descriptor 的 box、type、</text><text x="1187" y="462" text-anchor="middle" class="body">swizzle 等静态格式</text>
+
+  <text x="700" y="615" text-anchor="middle" class="mono">.override::global_address  +  .override::global_dim[_stride]</text>
+  <text x="700" y="651" text-anchor="middle" class="small">attribute override 必须连同 address override 使用；仅支持 tile mode，tensorCoords 必须全为 0</text>
+</svg>

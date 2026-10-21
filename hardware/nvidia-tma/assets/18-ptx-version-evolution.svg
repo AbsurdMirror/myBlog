@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620">
+  <defs>
+    <style>
+      text{font-family:"Microsoft YaHei","Noto Sans SC",sans-serif;fill:#263238}
+      .title{font-size:30px;font-weight:700}.ver{font-size:21px;font-weight:700}.body{font-size:17px}.minor{font-size:15px;fill:#53636a}
+      .axis{stroke:#56666b;stroke-width:4;stroke-linecap:round}.tick{stroke:#56666b;stroke-width:3;stroke-linecap:round}
+      .box{stroke-width:2.5;rx:18;ry:18}.link{stroke:#718086;stroke-width:2.5;fill:none;stroke-linecap:round}
+    </style>
+    <marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#56666b"/></marker>
+  </defs>
+  <rect width="1400" height="620" fill="#fbfaf6"/>
+  <text x="700" y="48" text-anchor="middle" class="title">TMA 的 PTX 演进：版本线与能力归类</text>
+  <line x1="110" y1="322" x2="1300" y2="322" class="axis" marker-end="url(#arrow)"/>
+
+  <g text-anchor="middle">
+    <line x1="170" y1="304" x2="170" y2="340" class="tick"/><text x="170" y="374" class="ver">8.6</text><text x="170" y="397" class="minor">CUDA 12.7</text>
+    <line x1="350" y1="304" x2="350" y2="340" class="tick"/><text x="350" y="374" class="ver">8.7</text><text x="350" y="397" class="minor">CUDA 12.8</text>
+    <line x1="525" y1="304" x2="525" y2="340" class="tick"/><text x="525" y="374" class="ver">8.8</text><text x="525" y="397" class="minor">CUDA 12.9</text>
+    <line x1="690" y1="304" x2="690" y2="340" class="tick"/><text x="690" y="374" class="ver">9.0</text><text x="690" y="397" class="minor">CUDA 13.0</text>
+    <line x1="845" y1="304" x2="845" y2="340" class="tick"/><text x="845" y="374" class="ver">9.2</text><text x="845" y="397" class="minor">CUDA 13.2</text>
+    <line x1="1010" y1="304" x2="1010" y2="340" class="tick"/><text x="1010" y="374" class="ver">9.3</text><text x="1010" y="397" class="minor">CUDA 13.3</text>
+    <line x1="1190" y1="304" x2="1190" y2="340" class="tick"/><text x="1190" y="374" class="ver">9.4</text><text x="1190" y="397" class="minor">CUDA 13.4</text>
+  </g>
+
+  <rect x="75" y="82" width="525" height="174" fill="#e7f3eb" stroke="#4e8764" class="box"/>
+  <text x="102" y="116" class="ver">Blackwell 主扩展</text>
+  <text x="102" y="148" class="body">8.6　CTA-local destination · byte mask</text>
+  <text x="102" y="178" class="body">　　 gather/scatter · W-only im2col · CTA pair</text>
+  <text x="102" y="210" class="body">8.7–8.8　新类型 · swizzle · a/f target 分化</text>
+  <path d="M170 256L170 296 M350 256L350 296 M525 256L525 296" class="link"/>
+
+  <rect x="755" y="435" width="345" height="126" fill="#fff1cd" stroke="#c28a27" class="box"/>
+  <text x="782" y="469" class="ver">跨代 ISA 补全</text>
+  <text x="782" y="501" class="body">9.2　边缘 OOB</text>
+  <text x="782" y="531" class="body">9.3　weak / relaxed.scope.b128</text>
+  <path d="M845 428L845 342 M1010 428L1010 342" class="link"/>
+
+  <rect x="1100" y="82" width="245" height="174" fill="#e9e5f7" stroke="#7765a8" class="box"/>
+  <text x="1125" y="116" class="ver">sm_107f 扩展</text>
+  <text x="1125" y="150" class="body">descriptor override</text>
+  <text x="1125" y="180" class="body">32-bit multicast</text>
+  <text x="1125" y="210" class="body">report · cache priority</text>
+  <path d="M1190 256L1190 296" class="link"/>
+
+  <text x="690" y="445" text-anchor="middle" class="minor">9.0：sm_101* 更名为 sm_110*，不计为新功能</text>
+  <text x="700" y="598" text-anchor="middle" class="minor">版本表示语法进入 PTX 的时间；实际可用性仍由每条指令的 target notes 决定</text>
+</svg>

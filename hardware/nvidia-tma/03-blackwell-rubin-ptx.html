@@ -1,0 +1,1985 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进 · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css"></head>
+<body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="03-blackwell-rubin-ptx.html">NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../models/deepseek-v4.1-flash/03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/03-blackwell-rubin-ptx.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="03-blackwell-rubin-ptx.html">NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../models/deepseek-v4.1-flash/03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="第三章blackwell-与-rubin-的-tma-ptx-演进">第三章：Blackwell 与 Rubin 的 TMA PTX 演进</h1>
+<blockquote>
+<p>本文是 <a href="index.html">NVIDIA TMA 调研系列</a> 第三章。上一篇：<a href="02-hopper-ptx.html">Hopper 第一代 TMA 的 PTX 设计</a>；引用编号见<a href="references.html">参考资料索引</a>。</p>
+</blockquote>
+<blockquote>
+<p>状态：成稿，已按第二章结构重新组织并完成版本、target、语法与约束复核（2026-10-21）<br />
+范围：PTX ISA 8.6–9.4；以第二章的 Hopper/PTX 8.0–8.3 接口为基线，只整理新增和发生变化的部分<br />
+资料回指：<a href="references.html">参考资料索引</a></p>
+</blockquote>
+<p>第二章先给出 Hopper 的完整 TMA 描述符，再给出 TMA 相关 PTX 指令全集，并逐字段、逐指令解释。本章沿用相同的观察顺序，但只记录相对 Hopper 基线发生的变化：每个版本段先说明描述符对象和字段是否变化，再列出指令变化总表，最后逐条解释变化的指令、修饰符和操作数。未发生变化的字段和指令不重复展开。</p>
+<h2 id="版本与-target-坐标">3.1 版本与 target 坐标</h2>
+<p>PTX 版本表示一种语法或语义从何时进入 PTX ISA；一条指令能否在某个 GPU target 上使用，还要继续检查该指令的 Target ISA Notes。尤其从 PTX 8.8 开始，<code>f</code> target 表示 <strong>family-specific</strong> 能力：例如 <code>sm_100f</code> 上可用的特性可以向同一 family 的更高 target 兼容，但不能据此推广到另一 family [S035]。</p>
+<p><img src="assets/18-ptx-version-evolution.svg" alt="PTX 8.6 至 9.4 的 TMA 相关变化与 target 线索" /></p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>PTX ISA</th>
+<th>CUDA 节点</th>
+<th>描述符变化</th>
+<th>指令变化</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>8.6</td>
+<td>CUDA 12.7</td>
+<td>增加 W-only im2col 描述方式<br>扩展 swizzle 表达</td>
+<td><code>.shared::cta</code> destination、<code>.cp_mask</code><br>gather4/scatter4<br>W-only im2col<br><code>.cta_group</code><br><code>.swizzle_atomicity</code></td>
+</tr>
+<tr class="even">
+<td>8.7</td>
+<td>CUDA 12.8</td>
+<td><code>tensorDataType</code> 增加三种 packed sub-byte 类型</td>
+<td><code>tensormap.replace.elemtype</code> 增加取值 13–15<br>增加 <code>sm_120/120a</code></td>
+</tr>
+<tr class="odd">
+<td>8.8</td>
+<td>CUDA 12.9</td>
+<td><code>swizzle</code> 增加 <code>96 B</code> 模式</td>
+<td><code>tensormap.replace.swizzle_mode</code> 增加取值 <code>4</code><br>引入 family-specific <code>f</code> target</td>
+</tr>
+<tr class="even">
+<td>9.0</td>
+<td>CUDA 13.0</td>
+<td>无新增字段或字段值</td>
+<td><code>sm_101*</code> 更名为 <code>sm_110*</code><br>本章范围内没有新的核心 TMA 语法</td>
+</tr>
+<tr class="odd">
+<td>9.1</td>
+<td>CUDA 13.1</td>
+<td>无 TMA descriptor 变化</td>
+<td>新增 <code>multimem.cp.async.bulk*</code><br>属于相邻的 bulk-async 路径，本章不展开</td>
+</tr>
+<tr class="even">
+<td>9.2</td>
+<td>CUDA 13.2</td>
+<td>无变化</td>
+<td><code>cp.async.bulk.ignore_oob</code></td>
+</tr>
+<tr class="odd">
+<td>9.3</td>
+<td>CUDA 13.3</td>
+<td>无变化</td>
+<td>bulk copy 增加 <code>.weak/.relaxed</code>、<code>.scope</code>、<code>.b128</code><br>bulk reduce 增加 <code>.sem.scope</code></td>
+</tr>
+<tr class="even">
+<td>9.4</td>
+<td>CUDA 13.4</td>
+<td>descriptor 本体没有增加 override 字段</td>
+<td>tensor property override<br><code>.im2col_no_offs::w</code><br>32-bit multicast mask<br>report mechanism<br>cache priority 操作</td>
+</tr>
+</tbody>
+</table>
+<p>PTX 9.1 的 <code>multimem.cp.async.bulk*</code> 沿用了 bulk async-group、<code>.cp_mask</code> 等表达，但其 destination 是 multimem address range，语义是向多个 GPU 对应的 memory location 发起 copy 或 reduction，不使用 tensor map。因此，本章不把“名称中含 <code>async.bulk</code>”直接等同于 TMA tensor path [S036]。</p>
+<h2 id="ptx-8.6blackwell-的主要扩展">3.2 PTX 8.6：Blackwell 的主要扩展</h2>
+<h3 id="描述符变化">3.2.1 描述符变化</h3>
+<p>Blackwell 没有改变 tensor map 的对象边界：<code>CUtensorMap</code> 仍是 128 B opaque object，地址至少按 64 B 对齐，物理 bit layout 仍不由 PTX 或 Driver API 公开定义。PTX 8.6 对 Hopper 的 Tiled descriptor 和 Im2col descriptor 扩展 <code>swizzle</code>，并增加 W-only Im2col descriptor [S034][S039]。</p>
+<h4 id="tiled-descriptor">Tiled descriptor</h4>
+<p>Tiled descriptor 的字段集合不变，只有 <code>swizzle</code> 的合法值发生变化：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>Hopper</th>
+<th>PTX 8.6 / Blackwell</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>swizzle</code></td>
+<td><code>none</code>、<code>32 B</code>、<code>64 B</code>、<code>128 B</code><br>atomicity 为 <code>16 B</code></td>
+<td>增加：<code>128 B span + 32 B atomicity</code><br><code>128 B span + 32 B atomicity + 8 B flip</code><br><code>128 B span + 64 B atomicity</code></td>
+<td>增加合法值</td>
+</tr>
+</tbody>
+</table>
+<p><code>swizzle</code> 指定数据写入或读出 shared memory 时的 bank swizzle。Blackwell 在 Hopper 的 <code>16 B</code> atomicity 基础上增加三种 128 B swizzle：</p>
+<table>
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 28%" />
+<col style="width: 28%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>swizzle 取值</th>
+<th style="text-align: right;">span</th>
+<th style="text-align: right;">atomicity</th>
+<th>额外操作</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>128 B span + 32 B atomicity</code></td>
+<td style="text-align: right;"><code>128 B</code></td>
+<td style="text-align: right;"><code>32 B</code></td>
+<td>无</td>
+</tr>
+<tr class="even">
+<td><code>128 B span + 32 B atomicity + 8 B flip</code></td>
+<td style="text-align: right;"><code>128 B</code></td>
+<td style="text-align: right;"><code>32 B</code></td>
+<td>交替行内交换每个 <code>16 B</code> 的低、高 <code>8 B</code></td>
+</tr>
+<tr class="odd">
+<td><code>128 B span + 64 B atomicity</code></td>
+<td style="text-align: right;"><code>128 B</code></td>
+<td style="text-align: right;"><code>64 B</code></td>
+<td>无</td>
+</tr>
+</tbody>
+</table>
+<p>atomicity 表示 swizzle 重排时不可再拆分的连续数据粒度。它不改变 global tensor 的坐标、shape 或 stride；不同 element type 和 copy direction 对这些取值还有组合限制 [S034][S039]。</p>
+<h4 id="im2col-descriptor">Im2col descriptor</h4>
+<p>Im2col descriptor 的字段集合不变，同样只有 <code>swizzle</code> 的合法值发生变化：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>Hopper</th>
+<th>PTX 8.6 / Blackwell</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>swizzle</code></td>
+<td><code>none</code>、<code>32 B</code>、<code>64 B</code>、<code>128 B</code><br>atomicity 为 <code>16 B</code></td>
+<td>增加：<code>128 B span + 32 B atomicity</code><br><code>128 B span + 32 B atomicity + 8 B flip</code><br><code>128 B span + 64 B atomicity</code></td>
+<td>增加合法值</td>
+</tr>
+</tbody>
+</table>
+<p><code>swizzle</code> 的新增取值及 atomicity 含义与 Tiled descriptor 相同；区别只在于 Im2col descriptor 还要同时满足其 element type、<code>channelsPerPixel</code>、interleave 和访问方向约束。<code>swizzle</code> 仍只改变 shared-memory 排列，不改变 Im2col 的 pixel box、访问坐标或 global tensor 布局 [S034][S039]。</p>
+<h4 id="w-only-im2col-descriptor">W-only Im2col descriptor</h4>
+<p>W-only Im2col descriptor 是新增的 descriptor 类型，由 <code>cuTensorMapEncodeIm2colWide</code> 创建。它继承 Im2col descriptor 未发生变化的字段；下表只列新增、替换或语义改变的字段 [S039]：</p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Im2col descriptor</th>
+<th>W-only Im2col descriptor</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>pixelBoxLowerCorner[]</code></td>
+<td><code>pixelBoxLowerCornerWidth</code></td>
+<td>替换</td>
+<td>DHW lower-corner 数组<br>改为单个 W 方向字段</td>
+</tr>
+<tr class="even">
+<td><code>pixelBoxUpperCorner[]</code></td>
+<td><code>pixelBoxUpperCornerWidth</code></td>
+<td>替换</td>
+<td>DHW upper-corner 数组<br>改为单个 W 方向字段</td>
+</tr>
+<tr class="odd">
+<td>—</td>
+<td><code>mode</code></td>
+<td>新增</td>
+<td>选择 W 或 W128 mode</td>
+</tr>
+<tr class="even">
+<td><code>pixelsPerColumn</code></td>
+<td><code>pixelsPerColumn</code></td>
+<td>改动</td>
+<td>W mode：沿 W 维访问的元素数<br>W128 mode：该字段被忽略</td>
+</tr>
+<tr class="odd">
+<td><code>swizzle</code></td>
+<td><code>swizzle</code></td>
+<td>改动</td>
+<td>合法组合收窄为 W-only mode 支持的 swizzle<br>PTX 8.8 再增加 <code>96 B</code> 模式</td>
+</tr>
+</tbody>
+</table>
+<p><code>tensorDataType</code>、<code>tensorRank</code>、<code>globalAddress</code>、<code>globalDim[]</code>、<code>globalStrides[]</code>、<code>channelsPerPixel</code>、<code>elementStrides[]</code>、<code>interleave</code>、<code>l2Promotion</code> 和 <code>oobFill</code> 均从 Im2col descriptor 继承，本节不重复列出。</p>
+<h5 id="pixelboxlowercornerwidth"><code>pixelBoxLowerCornerWidth</code></h5>
+<p>给出 W 维 pixel box 左边界相对 source pixel 的 offset，取值范围为 <code>[-32768, 32767]</code>。它取代通用 Im2col descriptor 的 <code>pixelBoxLowerCorner[]</code> 数组：W-only descriptor 不再编码 H、D 方向的 lower-corner 分量，H、D 方向的 box size 固定为 1 [S039]。</p>
+<h5 id="pixelboxuppercornerwidth"><code>pixelBoxUpperCornerWidth</code></h5>
+<p>给出 W 维 pixel box 右边界相对 source pixel 的 offset，取值范围同样为 <code>[-32768, 32767]</code>。它取代通用 Im2col descriptor 的 <code>pixelBoxUpperCorner[]</code> 数组。lower 与 upper corner 共同形成的 W 方向 box 必须具有非零范围 [S039]。</p>
+<h5 id="mode"><code>mode</code></h5>
+<p>指定 W-only descriptor 的访问模式：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>API 值</th>
+<th>对应 PTX mode</th>
+<th>访问元素数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>CU_TENSOR_MAP_IM2COL_WIDE_MODE_W</code></td>
+<td><code>.im2col::w</code></td>
+<td>由 <code>pixelsPerColumn</code> 指定</td>
+</tr>
+<tr class="even">
+<td><code>CU_TENSOR_MAP_IM2COL_WIDE_MODE_W128</code></td>
+<td><code>.im2col::w::128</code></td>
+<td>固定为 128，忽略 <code>pixelsPerColumn</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>mode</code> 是 descriptor 字段，决定 descriptor 采用可变长度还是固定 128-element 的 W-only 访问；指令上的 <code>.im2col::w</code> 或 <code>.im2col::w::128</code> 必须与 descriptor 编码匹配。</p>
+<h5 id="pixelspercolumn"><code>pixelsPerColumn</code></h5>
+<p>在 W mode 中表示沿 W 维访问的元素数，上限为 1024；在 W128 mode 中该字段仍作为 API 参数存在，但不会决定访问数量。它与通用 Im2col descriptor 中“沿 NDHW 展开的 pixel 总数”不同：W-only descriptor 将访问限制在 W 维，D、H 保持不变 [S039]。</p>
+<h5 id="swizzle"><code>swizzle</code></h5>
+<p>W-only Im2col descriptor 不接受任意 Im2col swizzle 组合。PTX 8.6 对应的 W/W128 编码使用 <code>64 B</code>、<code>128 B</code> 或 <code>128 B span + 32 B atomicity</code>；<code>none</code> 和 <code>128 B span + 32 B atomicity + 8 B flip</code> 不合法。PTX 8.8 又为部分 W-only 组合增加 <code>96 B</code> swizzle。具体可用集合还取决于 mode、element type、interleave 和 copy direction [S034][S035][S039]。</p>
+<h3 id="指令变化总表">3.2.2 指令变化总表</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>指令</th>
+<th>PTX 8.6 的变化</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>cp.async.bulk</code></td>
+<td>增加 <code>.shared::cta</code> destination<br>shared→global 增加 <code>.cp_mask</code></td>
+<td>修改</td>
+</tr>
+<tr class="even">
+<td><code>cp.async.bulk.tensor</code></td>
+<td>增加 <code>.shared::cta</code> destination<br><code>.tile::gather4/.scatter4</code><br><code>.im2col::w/.w::128</code><br><code>.cta_group</code></td>
+<td>修改</td>
+</tr>
+<tr class="odd">
+<td><code>cp.async.bulk.prefetch.tensor</code></td>
+<td>增加 <code>.tile::gather4</code><br><code>.im2col::w/.w::128</code></td>
+<td>修改</td>
+</tr>
+<tr class="even">
+<td><code>tensormap.replace</code></td>
+<td>增加 <code>.swizzle_atomicity</code> 字段选择符</td>
+<td>修改</td>
+</tr>
+</tbody>
+</table>
+<p><code>cp.reduce.async.bulk</code>、bulk async-group 的 <code>commit_group/wait_group</code> 以及 descriptor proxy 指令在 PTX 8.6 中没有改变，本节不重复解释。</p>
+<h3 id="cp.async.bulk">3.2.3 <code>cp.async.bulk</code></h3>
+<p>PTX 8.6 对第二章 2.2.3 的非 tensor bulk copy 做了两项扩展：global→shared 可以明确写入当前 CTA 的 shared memory；shared→global 可以为每个 16 B chunk 选择实际写出的 byte。</p>
+<pre class="ptx"><code>// PTX 8.6：global -&gt; 当前 CTA shared
+cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes
+    [dstMem], [srcMem], size, [mbar];
+
+// PTX 8.6：shared -&gt; global，按 byte mask 写出
+cp.async.bulk.global.shared::cta.bulk_group.cp_mask
+    [dstMem], [srcMem], size, byteMask;</code></pre>
+<p>相对 Hopper 形式，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段或形式</th>
+<th>PTX 8.0</th>
+<th>PTX 8.6</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dst</code></td>
+<td><code>.shared::cluster</code>、<code>.global</code></td>
+<td>增加 <code>.shared::cta</code></td>
+<td>新增取值</td>
+<td>global 数据可以直接声明写入 executing CTA 的 shared-memory window</td>
+</tr>
+<tr class="even">
+<td><code>.src</code></td>
+<td><code>.global</code>、<code>.shared::cta</code></td>
+<td>不变</td>
+<td>保持不变</td>
+<td>仍不允许把远端 <code>.shared::cluster</code> 作为 source</td>
+</tr>
+<tr class="odd">
+<td><code>.cp_mask</code></td>
+<td>无</td>
+<td>shared→global 可选</td>
+<td>新增</td>
+<td>表示指令末尾存在 <code>byteMask</code></td>
+</tr>
+<tr class="even">
+<td><code>byteMask</code></td>
+<td>无</td>
+<td>16-bit</td>
+<td>新增</td>
+<td>bit <code>i</code> 控制每个 16 B source chunk 中第 <code>i</code> byte 是否复制</td>
+</tr>
+</tbody>
+</table>
+<h4 id="dst-与-.src"><code>.dst</code> 与 <code>.src</code></h4>
+<p>PTX 8.6 只扩展了 destination 集合，source 集合保持不变：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>modifier</th>
+<th>PTX 8.0</th>
+<th>PTX 8.6</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dst</code></td>
+<td><code>.shared::cluster</code>、<code>.global</code></td>
+<td><code>.shared::cta</code>、<code>.shared::cluster</code>、<code>.global</code></td>
+</tr>
+<tr class="even">
+<td><code>.src</code></td>
+<td><code>.global</code>、<code>.shared::cta</code></td>
+<td><code>.global</code>、<code>.shared::cta</code></td>
+</tr>
+</tbody>
+</table>
+<p>各取值的语义如下：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>取值</th>
+<th>作为 <code>.dst</code> / <code>.src</code> 时的语义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.shared::cta</code> destination</td>
+<td>数据写入 executing CTA 自己的 shared memory<br>这是 PTX 8.6 新增的 destination</td>
+</tr>
+<tr class="even">
+<td><code>.shared::cluster</code> destination</td>
+<td>数据写入当前 cluster 内由 <code>dstMem</code> 指定的 CTA shared memory<br>shared→shared 形式要求目标位于另一 CTA</td>
+</tr>
+<tr class="odd">
+<td><code>.global</code> destination</td>
+<td>数据从当前 CTA 的 shared memory 写入 global memory</td>
+</tr>
+<tr class="even">
+<td><code>.global</code> source</td>
+<td>数据从 global memory 读入 shared memory</td>
+</tr>
+<tr class="odd">
+<td><code>.shared::cta</code> source</td>
+<td>数据从 executing CTA 自己的 shared memory 读出</td>
+</tr>
+</tbody>
+</table>
+<p>指令名中的两个 state-space modifier 仍按 <code>.dst.src</code> 排列。到 PTX 8.6，合法组合为：</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 28%" />
+<col style="width: 28%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th><code>.dst.src</code> 组合</th>
+<th>数据方向</th>
+<th style="text-align: right;"><code>cp.async.bulk</code></th>
+<th style="text-align: right;"><code>cp.async.bulk.tensor</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.shared::cta.global</code></td>
+<td>global → 当前 CTA shared</td>
+<td style="text-align: right;">支持</td>
+<td style="text-align: right;">支持</td>
+</tr>
+<tr class="even">
+<td><code>.shared::cluster.global</code></td>
+<td>global → cluster 内 CTA shared</td>
+<td style="text-align: right;">支持</td>
+<td style="text-align: right;">支持</td>
+</tr>
+<tr class="odd">
+<td><code>.shared::cluster.shared::cta</code></td>
+<td>当前 CTA shared → 另一 CTA shared</td>
+<td style="text-align: right;">支持</td>
+<td style="text-align: right;">不支持</td>
+</tr>
+<tr class="even">
+<td><code>.global.shared::cta</code></td>
+<td>当前 CTA shared → global</td>
+<td style="text-align: right;">支持</td>
+<td style="text-align: right;">支持</td>
+</tr>
+</tbody>
+</table>
+<p>前三种 shared destination 组合采用 <code>.mbarrier::complete_tx::bytes</code>；<code>.global.shared::cta</code> 采用 <code>.bulk_group</code>。mbarrier 与 multicast 的合法组合为：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>约束</th>
+<th><code>.shared::cta.global</code></th>
+<th><code>.shared::cluster.global</code></th>
+<th><code>.shared::cluster.shared::cta</code></th>
+<th><code>.global.shared::cta</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>[mbar]</code></td>
+<td>必选</td>
+<td>必选</td>
+<td>必选</td>
+<td>不使用</td>
+</tr>
+<tr class="even">
+<td><code>.multicast::cluster</code> / <code>ctaMask</code></td>
+<td>不合法</td>
+<td>可选</td>
+<td>不合法</td>
+<td>不合法</td>
+</tr>
+<tr class="odd">
+<td>完成机制</td>
+<td>mbarrier</td>
+<td>mbarrier</td>
+<td>mbarrier</td>
+<td>bulk async-group</td>
+</tr>
+</tbody>
+</table>
+<p><code>.shared::cta.global</code> 要求 <code>dstMem</code> 位于 executing CTA。<code>.multicast::cluster</code> 仍只属于 <code>.shared::cluster.global</code>：<code>ctaMask</code> 选择多个 destination CTA，数据和完成通知分别到达这些 CTA 中与 <code>dstMem</code>、<code>mbar</code> 相同的 CTA-relative offset [S034]。</p>
+<h4 id="cp_mask-与-bytemask"><code>.cp_mask</code> 与 <code>byteMask</code></h4>
+<p><code>byteMask</code> 是 16-bit 值。bit <code>i</code> 控制每个 16 B source chunk 中第 <code>i</code> 个 byte 是否复制；同一个 mask 对整个传输中的每个 16 B chunk 重复应用。</p>
+<p>例如 <code>byteMask = 0x00FF</code>、<code>size = 64</code> 时：</p>
+<pre class="text"><code>chunk 0: 复制 byte  0..7，跳过  8..15
+chunk 1: 复制 byte 16..23，跳过 24..31
+chunk 2: 复制 byte 32..39，跳过 40..47
+chunk 3: 复制 byte 48..55，跳过 56..63</code></pre>
+<p><code>.cp_mask</code> 不改变 <code>size</code> 必须为 16 B 倍数、src/dst 必须 16 B 对齐以及 <code>.bulk_group</code> 完成机制。该 qualifier 要求 <code>sm_100</code> 或更高 [S034]。</p>
+<h3 id="cp.async.bulk.tensor">3.2.4 <code>cp.async.bulk.tensor</code></h3>
+<pre class="ptx"><code>// global -&gt; 当前 CTA shared
+cp.async.bulk.tensor.dim.shared::cta.global{.load_mode}
+    .mbarrier::complete_tx::bytes{.cta_group}{.L2::cache_hint}
+    [dstMem], [tensorMap, tensorCoords], [mbar]
+    {, im2colInfo} {, cache-policy};
+
+// global -&gt; cluster shared；可选 multicast
+cp.async.bulk.tensor.dim.shared::cluster.global{.load_mode}
+    .mbarrier::complete_tx::bytes{.multicast::cluster}{.cta_group}{.L2::cache_hint}
+    [dstMem], [tensorMap, tensorCoords], [mbar]
+    {, im2colInfo} {, ctaMask} {, cache-policy};
+
+// shared -&gt; global；scatter4 是新增 store mode
+cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group
+    [tensorMap, {col_idx, row_idx0, row_idx1, row_idx2, row_idx3}], [srcMem];</code></pre>
+<p>该指令沿用第二章 2.2.6 的 <code>tensorMap</code>、<code>.dim</code>、完成机制和 cache-policy 表达；原有 <code>.tile</code>、<code>.im2col</code> 与 <code>.im2col_no_offs</code> 形式的操作数含义不变。变化项如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 8.0</th>
+<th>PTX 8.6</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dst</code></td>
+<td>load：<code>.shared::cluster</code><br>store：<code>.global</code></td>
+<td>load：<code>.shared::cta</code>、<code>.shared::cluster</code><br>store：<code>.global</code></td>
+<td>新增取值</td>
+<td>load 增加 CTA-local shared destination</td>
+</tr>
+<tr class="even">
+<td><code>.load_mode</code></td>
+<td>load：<code>.tile</code>、<code>.im2col</code><br>store：<code>.tile</code>、<code>.im2col_no_offs</code></td>
+<td>load（tile）：<code>.tile</code>、<code>.tile::gather4</code><br>load（im2col）：<code>.im2col</code>、<code>.im2col::w</code>、<code>.im2col::w::128</code><br>store：<code>.tile</code>、<code>.im2col_no_offs</code>、<code>.tile::scatter4</code></td>
+<td>新增取值</td>
+<td>load 增加 gather4 和 W-only im2col<br>store 增加 scatter4</td>
+</tr>
+<tr class="odd">
+<td><code>.cta_group</code></td>
+<td>无</td>
+<td>省略（等同 <code>.cta_group::1</code>）<br><code>.cta_group::2</code></td>
+<td>新增字段</td>
+<td>指定 CTA-pair 下的 mbarrier 完成通知路由</td>
+</tr>
+<tr class="even">
+<td><code>tensorCoords</code></td>
+<td><code>.s32[dim]</code></td>
+<td>原有形式不变<br>gather4/scatter4：<code>{col_idx, row_idx0, row_idx1, row_idx2, row_idx3}</code></td>
+<td>新增形式</td>
+<td>gather4/scatter4 为一个 column 指定四个独立 row 坐标</td>
+</tr>
+<tr class="odd">
+<td><code>im2colInfo</code></td>
+<td><code>.im2col</code>：W/H/D offsets</td>
+<td>原有形式不变<br>W-only：<code>{wHalo, wOffset}</code></td>
+<td>新增形式</td>
+<td>W-only mode 增加 W 维 halo 与动态 offset</td>
+</tr>
+</tbody>
+</table>
+<h4 id="dst"><code>.dst</code></h4>
+<p><code>.dst</code> 的变化与 3.2.3 相同：PTX 8.6 为 global→shared 形式增加 <code>.shared::cta</code> destination，其语义和地址约束不再重复展开。</p>
+<h4 id="load_mode"><code>.load_mode</code></h4>
+<p>PTX 8.6 为 tensor load 增加 <code>.tile::gather4</code>、<code>.im2col::w</code> 和 <code>.im2col::w::128</code>，并为 tensor store 增加 <code>.tile::scatter4</code>。下面分别说明两组新增 mode。</p>
+<h5 id="tilegather4-与-.tilescatter4"><code>.tile::gather4</code> 与 <code>.tile::scatter4</code></h5>
+<p>两种 mode 都只适用于 2D tensor，用来选择 global tensor 中四个可以互不连续的 row。<code>.tile::gather4</code> 将四个 global rows 组合成一个连续的 shared tile；<code>.tile::scatter4</code> 执行相反方向的 store，将连续 shared tile 分散写入四个 global rows [S034]。</p>
+<pre class="ptx"><code>cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4
+    .mbarrier::complete_tx::bytes
+    [dstMem], [tensorMap, {col_idx, row_idx0, row_idx1, row_idx2, row_idx3}], [mbar];
+
+cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group
+    [tensorMap, {col_idx, row_idx0, row_idx1, row_idx2, row_idx3}], [srcMem];</code></pre>
+<p><img src="assets/19-gather4-scatter4.svg" alt="gather4 与 scatter4 在连续 shared tile 和四个 global rows 之间的映射" /></p>
+<p>这两个 mode 将 <code>tensorCoords</code> 从普通的 <code>.s32[dim]</code> 改为固定五个 <code>.s32</code> 坐标：</p>
+<pre class="text"><code>{col_idx, row_idx0, row_idx1, row_idx2, row_idx3}</code></pre>
+<p>它们表示四个起点 <code>(col_idx, row_idxN)</code>，即四行共享同一个 column 坐标，row 坐标分别给出。四个起点在 tensor space 中形成四个 bounding box；每个 box 的 dimension 0 size 表示 row length，dimension 1 size 必须为 1。四行之间可以不连续，但每行内部仍按 tiled mode 连续访问。除上述坐标形式外，其余 tiled-mode 规则继续生效；interleave layout 不受支持 [S034]。</p>
+<p><code>.tile::gather4</code> 的 <code>.shared::cta</code> destination 要求 <code>sm_100</code> 或更高，同一模式的 <code>.shared::cluster</code> destination 要求 <code>sm_100a</code>。<code>.tile::scatter4</code> 要求 <code>sm_100a</code> 或 <code>sm_101a</code> [S034][S035]。</p>
+<h5 id="im2colw-与-.im2colw128"><code>.im2col::w</code> 与 <code>.im2col::w::128</code></h5>
+<p>这两种 mode 保留普通 <code>.im2col</code> 的基本语义，但把展开限制在 W 维：D、H 方向的 bounding-box size 固定为 1，其位置仍由普通的 <code>.s32[dim]</code> <code>tensorCoords</code> 指定；W 方向的 box 则由 W-only descriptor 的 lower/upper corner 与 W 坐标共同确定 [S034]。</p>
+<p>两种 mode 都在指令末尾增加 <code>im2colInfo = {wHalo, wOffset}</code>：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>项目</th>
+<th><code>.im2col::w</code></th>
+<th><code>.im2col::w::128</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>主体访问数量</td>
+<td>由 descriptor 的 <code>pixelsPerColumn</code> 指定</td>
+<td>固定为 128，忽略 <code>pixelsPerColumn</code></td>
+</tr>
+<tr class="even">
+<td><code>wHalo</code></td>
+<td><code>[0, 512)</code>；在主体 row 旁加载附加 halo</td>
+<td><code>[0, 32)</code>；每处理 32 个主体元素插入一组 halo</td>
+</tr>
+<tr class="odd">
+<td><code>wOffset</code></td>
+<td><code>[0, 32)</code>；同时平移 W 坐标及 W box 的 lower/upper corner</td>
+<td><code>[0, 32)</code>；作用相同</td>
+</tr>
+</tbody>
+</table>
+<p><code>wHalo</code> 决定附加装入 shared memory 的 W 方向 halo 数量；<code>wOffset</code> 用于把同一 W-only descriptor 指向不同的 W 起点，从而为不同 shared buffer 发起 copy。指令 mode 必须与 descriptor 创建时选择的 W/W128 mode 匹配 [S034][S039]。</p>
+<p>两种 mode 都不支持 interleave，并要求使用合法 swizzle：<code>none</code> 与 <code>128 B span + 32 B atomicity + 8 B flip</code> 不合法。<code>.im2col::w</code> 的 <code>.shared::cta</code> destination 要求 <code>sm_100</code> 或更高，<code>.shared::cluster</code> destination 要求 <code>sm_100a</code>；<code>.im2col::w::128</code> 仅支持 <code>sm_100a</code> 和 <code>sm_101a</code> [S034][S035]。</p>
+<h4 id="cta_group"><code>.cta_group</code></h4>
+<p><code>.cta_group</code> 只用于 global→shared tensor load 的 mbarrier completion；shared→global 的 <code>.bulk_group</code> store 不使用它。省略 <code>.cta_group</code> 等同于 <code>.cta_group::1</code> [S034]。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>形式</th>
+<th><code>mbar</code> 与 destination 的关系</th>
+<th>multicast 时的完成通知</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.cta_group::1</code></td>
+<td><code>mbar</code> 必须位于 <code>dstMem</code> 所属 CTA</td>
+<td>通知每个 destination CTA 中与 <code>mbar</code> 相同的 shared-memory offset</td>
+</tr>
+<tr class="even">
+<td><code>.cta_group::2</code></td>
+<td><code>mbar</code> 可以位于 destination CTA，也可以位于其 peer CTA</td>
+<td>对每个 CTA-pair，按 <code>mbar</code> 所在 CTA 的 rank parity 将通知路由到奇数侧或偶数侧</td>
+</tr>
+</tbody>
+</table>
+<p><code>.cta_group::2</code> 改变的是 CTA-pair 内的完成通知路由，不改变数据 destination，也不表示两个线程共同发出指令。数据仍写向 <code>dstMem</code> 指定的位置，multicast 的 destination 集合仍由 <code>ctaMask</code> 决定。该 qualifier 要求 <code>sm_100a</code> 或 <code>sm_101a</code> [S034]。</p>
+<h3 id="cp.async.bulk.prefetch.tensor">3.2.5 <code>cp.async.bulk.prefetch.tensor</code></h3>
+<p>该指令的 descriptor、坐标和 cache-policy 含义仍与第二章 2.2.8 相同。PTX 8.6 只扩展 <code>.load_mode</code> 以及相应坐标/附加操作数：</p>
+<pre class="ptx"><code>cp.async.bulk.prefetch.tensor.2d.L2.global.tile::gather4
+    [tensorMap, {col_idx, row_idx0, row_idx1, row_idx2, row_idx3}];
+
+cp.async.bulk.prefetch.tensor.4d.L2.global.im2col::w::128
+    [tensorMap, {t0, t1, t2, t3}], {wHalo, wOffset};</code></pre>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 8.0</th>
+<th>PTX 8.6</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.load_mode</code></td>
+<td><code>.tile/.im2col</code></td>
+<td>增加 <code>.tile::gather4</code><br><code>.im2col::w/.w::128</code></td>
+<td>可以预取四个不连续 row<br>或 W-only im2col 区域</td>
+</tr>
+<tr class="even">
+<td><code>tensorCoords</code></td>
+<td><code>.s32[dim]</code></td>
+<td>gather4 固定 5 个坐标</td>
+<td>描述一个 column 起点和四个 row</td>
+</tr>
+<tr class="odd">
+<td><code>im2colInfo</code></td>
+<td>通用 W/H/D offset</td>
+<td>W-only 使用 <code>{wHalo, wOffset}</code></td>
+<td>与 3.2.4 相同</td>
+</tr>
+</tbody>
+</table>
+<p><code>.load_mode</code>、<code>tensorCoords</code> 和 <code>im2colInfo</code> 的新增取值、操作数形式及语义与 3.2.4 的 tensor load 相同，本节不再重复展开。区别在于 prefetch 的目标固定为 L2，不存在 shared-memory destination，因此不使用 <code>.shared::cta</code>、<code>.cta_group</code> 或 <code>.tile::scatter4</code>，也不产生供程序等待的 shared-memory 数据完成对象。gather4 与 W-only mode 仍要求相应的 architecture/family-specific target [S034]。</p>
+<h3 id="tensormap.replace">3.2.6 <code>tensormap.replace</code></h3>
+<p>PTX 8.6 在第二章 2.2.11 的 <code>.field3</code> 选择符中增加 <code>.swizzle_atomicity</code>：</p>
+<pre class="ptx"><code>tensormap.replace.tile.swizzle_atomicity{.ss}.b1024.b32
+    [addr], new_val;</code></pre>
+<p>其余 <code>.tile</code>、<code>.ss</code>、<code>.b1024</code>、<code>addr</code> 和立即数规则不变。新增值为：</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;"><code>new_val</code></th>
+<th style="text-align: right;">swizzle atomicity</th>
+<th>额外含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>16 B</code></td>
+<td>Hopper 原有粒度</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><code>1</code></td>
+<td style="text-align: right;"><code>32 B</code></td>
+<td>以 <code>32 B</code> 为不可拆分 swizzle 单元</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;"><code>2</code></td>
+<td style="text-align: right;"><code>32 B</code></td>
+<td>额外启用 <code>8 B flip</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><code>3</code></td>
+<td style="text-align: right;"><code>64 B</code></td>
+<td>以 <code>64 B</code> 为不可拆分 swizzle 单元</td>
+</tr>
+</tbody>
+</table>
+<p>这条指令改变 descriptor 中的 swizzle 属性；它不意味着 descriptor 对象新增了一个由 PTX 独立公开布局的字段。修改后的 proxy 发布和 acquire 规则仍完全沿用第二章 2.2.12 [S034]。</p>
+<h2 id="ptx-8.79.0字段取值扩展与-target-分化">3.3 PTX 8.7–9.0：字段取值扩展与 target 分化</h2>
+<p>PTX 8.7–9.0 没有改变 tensor map 的 128 B opaque-object 边界，也没有新增 shape、stride 或 box 字段。描述符变化只发生在 <code>tensorDataType</code> 与 <code>swizzle</code> 的合法取值；相应的 device-side 修改能力通过 <code>tensormap.replace</code> 扩展。PTX 8.8 和 9.0 还分别引入 family-specific target 表达与 target 重命名 [S035][S036]。</p>
+<h3 id="描述符变化-1">3.3.1 描述符变化</h3>
+<p>PTX 8.7–9.0 没有新增 descriptor 类型或字段。Tiled、Im2col 和 W-only Im2col descriptor 都只扩展既有字段的合法取值；PTX 9.0 没有继续改变 descriptor。</p>
+<h4 id="tiled-descriptor-1">Tiled descriptor</h4>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 8.6</th>
+<th>PTX 8.7–8.8</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensorDataType</code></td>
+<td>Hopper/Blackwell 原有 element type</td>
+<td>增加 <code>.b4x16</code>、<code>.b4x16_p64</code><br><code>.b6x16_p32</code> / <code>.b6p2x16</code></td>
+<td>新增取值</td>
+</tr>
+<tr class="even">
+<td><code>swizzle</code></td>
+<td>PTX 8.6 已有取值</td>
+<td>增加 <code>96 B</code> swizzle</td>
+<td>新增取值</td>
+</tr>
+</tbody>
+</table>
+<h5 id="tensordatatype"><code>tensorDataType</code></h5>
+<p>PTX 8.7 增加三种以 16 个 sub-byte element 为一组的 packed format：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>PTX 类型</th>
+<th>Driver API 对应类型</th>
+<th>物理表达</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.b4x16</code></td>
+<td><code>CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B</code></td>
+<td>16 个 U4 紧密放入 8 B</td>
+</tr>
+<tr class="even">
+<td><code>.b4x16_p64</code></td>
+<td><code>CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B</code></td>
+<td>8 B packed data 后带 8 B 间隔</td>
+</tr>
+<tr class="odd">
+<td><code>.b6x16_p32</code><br><code>.b6p2x16</code></td>
+<td><code>CU_TENSOR_MAP_DATA_TYPE_16U6_ALIGN16B</code></td>
+<td>12 B packed data 后带 4 B 间隔</td>
+</tr>
+</tbody>
+</table>
+<p><code>.b6x16_p32</code> 与 <code>.b6p2x16</code> 是同一类 16U6 descriptor encoding 在 PTX 文档中的两个名称。上述类型不是普通 <code>.u8</code> 的局部截位，而是 descriptor 对 global tensor element packing 的完整定义 [S035][S039]。</p>
+<p>packed sub-byte 类型同时收紧 tensor copy 的布局组合，主要限制如下：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>约束项</th>
+<th>限制</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>OOB fill</td>
+<td>不支持 OOB-NaN fill</td>
+</tr>
+<tr class="even">
+<td><code>.b4x16_p64</code></td>
+<td>Box-Size[0] 必须为 <code>64 B</code>，Tensor-Size[0] 必须为 <code>64 B</code> 的倍数</td>
+</tr>
+<tr class="odd">
+<td><code>.b6x16_p32</code><br><code>.b6p2x16</code></td>
+<td>Box-Size[0] 必须为 <code>96 B</code>，Tensor-Size[0] 必须为 <code>96 B</code> 的倍数</td>
+</tr>
+<tr class="even">
+<td>address / stride</td>
+<td>对带 padding 的类型，global address 及各维 stride 通常要求 <code>32 B</code> 对齐</td>
+</tr>
+<tr class="odd">
+<td><code>tensorCoords[0]</code></td>
+<td>对带 padding 的类型，通常要求为 128 的倍数</td>
+</tr>
+<tr class="even">
+<td>swizzle</td>
+<td>带 padding 的类型只支持 no-swizzle 或受限的 <code>128 B</code> swizzle 组合</td>
+</tr>
+</tbody>
+</table>
+<p>这些限制还有 target-specific 例外，例如 <code>sm_103a</code> 的 <code>.b6p2x16</code> local-store 形式使用另一组 box、alignment 和 coordinate 约束。因此不能仅根据 <code>tensorDataType</code> 判断某条 tensor copy 是否合法，还必须结合 direction、swizzle 和 target 检查 [S035]。</p>
+<h5 id="swizzle-1"><code>swizzle</code></h5>
+<p>PTX 8.8 为 descriptor 增加 <code>96 B</code> swizzle。它仍以 <code>16 B</code> 为 atomicity，但具有独立的 96 B swizzle span：</p>
+<table>
+<thead>
+<tr class="header">
+<th>属性</th>
+<th><code>96 B</code> swizzle</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>swizzle atomicity</td>
+<td>固定为 <code>16 B</code></td>
+</tr>
+<tr class="even">
+<td>interleave</td>
+<td>不支持</td>
+</tr>
+<tr class="odd">
+<td>Box-Size[0]</td>
+<td>不得超过 <code>96 B</code></td>
+</tr>
+<tr class="even">
+<td>element type</td>
+<td>不支持 <code>.b4x16_p64</code><br><code>.b6x16_p32</code><br><code>.b6p2x16</code></td>
+</tr>
+<tr class="odd">
+<td>load mode</td>
+<td>不支持 <code>.im2col::w::128</code></td>
+</tr>
+<tr class="even">
+<td>零 base-offset 边界</td>
+<td><code>dstMem</code> 位于 <code>256 B</code> boundary</td>
+</tr>
+<tr class="odd">
+<td>非零 base offset</td>
+<td><code>(dstMem / 128) % 2</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>96 B</code> 描述的是 shared-memory swizzle span，不是 tensor 的传输长度；一次 operation 的实际范围仍由 descriptor 的 box、坐标和 mode 决定。该模式最初是 <code>sm_103a</code> 的 architecture-specific 能力 [S035]。</p>
+<h4 id="im2col-descriptor-1">Im2col descriptor</h4>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 8.6</th>
+<th>PTX 8.7–8.8</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensorDataType</code></td>
+<td>Hopper/Blackwell 原有 element type</td>
+<td>增加 <code>.b4x16</code>、<code>.b4x16_p64</code><br><code>.b6x16_p32</code> / <code>.b6p2x16</code></td>
+<td>新增取值</td>
+</tr>
+<tr class="even">
+<td><code>swizzle</code></td>
+<td>PTX 8.6 已有取值</td>
+<td>增加 <code>96 B</code> swizzle</td>
+<td>新增取值</td>
+</tr>
+</tbody>
+</table>
+<h5 id="tensordatatype-1"><code>tensorDataType</code></h5>
+<p>新增类型及其 packing 与 Tiled descriptor 相同，不再重复列表。Im2col descriptor 仍需同时满足 <code>channelsPerPixel</code>、box、stride、OOB fill、swizzle 和 copy direction 的组合约束；增加 packed element type 不改变 <code>pixelBoxLowerCorner[]</code>、<code>pixelBoxUpperCorner[]</code> 或 <code>pixelsPerColumn</code> 的含义。</p>
+<h5 id="swizzle-2"><code>swizzle</code></h5>
+<p><code>96 B</code> swizzle 的 span、atomicity、base-offset 和 element-type 限制与 Tiled descriptor 相同。它只改变 shared-memory 排列，不改变 Im2col 的 global tensor 坐标或 pixel-box 语义。</p>
+<h4 id="w-only-im2col-descriptor-1">W-only Im2col descriptor</h4>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 8.6</th>
+<th>PTX 8.7–8.8</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensorDataType</code></td>
+<td>PTX 8.6 W-only 支持的 element type</td>
+<td>增加 packed sub-byte types</td>
+<td>新增取值</td>
+</tr>
+<tr class="even">
+<td><code>swizzle</code></td>
+<td>PTX 8.6 W/W128 支持的 swizzle</td>
+<td>增加 <code>96 B</code> swizzle</td>
+<td>新增取值</td>
+</tr>
+</tbody>
+</table>
+<h5 id="tensordatatype-2"><code>tensorDataType</code></h5>
+<p>packed sub-byte 类型的编码与 Tiled descriptor 相同，但合法性仍取决于 W-only mode、box、alignment、copy direction 和 target。本次变化不改变 <code>pixelBoxLowerCornerWidth</code>、<code>pixelBoxUpperCornerWidth</code>、<code>mode</code> 或 <code>pixelsPerColumn</code> 的含义。</p>
+<h5 id="swizzle-3"><code>swizzle</code></h5>
+<p><code>96 B</code> swizzle 可以进入 W-only descriptor 的合法取值集合，但不能与 <code>.im2col::w::128</code> mode 组合；W-only descriptor 其余 swizzle 约束继续沿用 3.2.1。</p>
+<h3 id="指令变化总表-1">3.3.2 指令变化总表</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>指令</th>
+<th>PTX 8.7–9.0 的变化</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensormap.replace</code></td>
+<td>PTX 8.7：<code>.elemtype</code> 的 <code>new_val</code> 增加 13–15<br>PTX 8.8：<code>.swizzle_mode</code> 的 <code>new_val</code> 增加 <code>4</code></td>
+<td>修改</td>
+</tr>
+</tbody>
+</table>
+<p>PTX 9.0 没有新增 TMA 指令或操作数。PTX 8.8 的 family-specific target 和 PTX 9.0 的 target 重命名不改变指令语法，统一在 3.3.4 说明。</p>
+<h3 id="tensormap.replace-1">3.3.3 <code>tensormap.replace</code></h3>
+<p>PTX 8.7–8.8 没有改变 <code>tensormap.replace</code> 的汇编结构，只扩展两个既有 field selector 对应的 <code>new_val</code> 集合：</p>
+<pre class="ptx"><code>tensormap.replace.tile.elemtype{.ss}.b1024.b32
+    [addr], new_val;
+
+tensormap.replace.tile.swizzle_mode{.ss}.b1024.b32
+    [addr], new_val;</code></pre>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 8.6</th>
+<th>PTX 8.7–8.8</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.elemtype</code></td>
+<td><code>new_val = 0–12</code></td>
+<td><code>new_val = 0–15</code></td>
+<td>新增取值</td>
+<td><code>13–15</code> 对应三种 packed sub-byte element type</td>
+</tr>
+<tr class="even">
+<td><code>.swizzle_mode</code></td>
+<td><code>new_val = 0–3</code></td>
+<td><code>new_val = 0–4</code></td>
+<td>新增取值</td>
+<td><code>4</code> 对应 <code>96 B</code> swizzle</td>
+</tr>
+</tbody>
+</table>
+<h4 id="elemtype"><code>.elemtype</code></h4>
+<p>PTX 8.6 的 <code>.elemtype</code> 接受 <code>new_val = 0–12</code>；PTX 8.7 增加以下三个值：</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;"><code>new_val</code></th>
+<th>descriptor element type</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;"><code>13</code></td>
+<td><code>.b4x16</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><code>14</code></td>
+<td><code>.b4x16_p64</code></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;"><code>15</code></td>
+<td><code>.b6x16_p32</code> / <code>.b6p2x16</code></td>
+</tr>
+</tbody>
+</table>
+<p>这些 <code>new_val</code> 是 PTX 为 <code>tensormap.replace</code> 定义的编码，不等同于 Driver API 中 <code>CUtensorMapDataType</code> 枚举的数值。各 element type 的物理表达和组合限制见 3.3.1。</p>
+<h4 id="swizzle_mode"><code>.swizzle_mode</code></h4>
+<p>PTX 8.6 的 <code>.swizzle_mode</code> 接受 <code>new_val = 0–3</code>；PTX 8.8 增加 <code>new_val = 4</code>，表示 <code>96 B</code> swizzle。该值要求 <code>16 B</code> swizzle atomicity，最初只支持 <code>sm_103a</code>；其他 descriptor 约束见 3.3.1 [S035]。</p>
+<p><code>.ss</code>、<code>.b1024</code>、<code>addr</code>、整对象 weak write，以及修改后的 proxy release/acquire 规则均与第二章 2.2.11–2.2.12 相同，本节不再重复展开。</p>
+<h3 id="target-分化">3.3.4 target 分化</h3>
+<p>这一阶段的 target 变化决定的是能力可以在哪些架构上使用，而不是 descriptor 或 opcode 又增加了新字段。PTX 对 Blackwell 相关 target 至少区分三种兼容边界：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>target 形式</th>
+<th>兼容含义</th>
+<th>使用原则</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>sm_NN</code></td>
+<td>baseline target</td>
+<td>只使用该 compute capability 的基础能力</td>
+</tr>
+<tr class="even">
+<td><code>sm_NNa</code></td>
+<td>architecture-specific target</td>
+<td>能力绑定该精确 architecture，不能据此推广到其他 target</td>
+</tr>
+<tr class="odd">
+<td><code>sm_NNf</code></td>
+<td>family-specific target</td>
+<td>可在同一 family 中支持该 feature set 的后续 target 上使用</td>
+</tr>
+</tbody>
+</table>
+<p>各 PTX 版本的变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>PTX</th>
+<th>target 变化</th>
+<th>对本章 TMA 能力的影响</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>8.7</td>
+<td>增加 <code>sm_120/120a</code></td>
+<td><code>sm_120a</code> 的 cluster-destination tensor copy 不支持 sub-byte type<br>也不支持 <code>.swizzle_atomicity</code></td>
+</tr>
+<tr class="even">
+<td>8.8</td>
+<td>增加 <code>sm_100f</code>、<code>sm_101f</code>、<code>sm_103f</code>、<code>sm_120f</code> 等 <code>f</code> target</td>
+<td>部分原先只列在 <code>a</code> target 下的 TMA 扩展获得同 family 的兼容表达</td>
+</tr>
+<tr class="odd">
+<td>8.8</td>
+<td>增加 <code>sm_103a</code></td>
+<td><code>96 B</code> swizzle 及其 <code>tensormap.replace</code> 编码最初要求该 target</td>
+</tr>
+<tr class="even">
+<td>9.0</td>
+<td><code>sm_101*</code> 更名为 <code>sm_110*</code></td>
+<td><code>sm_101</code> → <code>sm_110</code><br><code>sm_101a</code> → <code>sm_110a</code><br><code>sm_101f</code> → <code>sm_110f</code></td>
+</tr>
+</tbody>
+</table>
+<p>因此，Blackwell TMA 能力不能统一概括为“<code>sm_100+</code>”。例如 <code>.shared::cta</code> destination 属于 baseline 能力，而 cluster gather4、scatter4、<code>.cta_group</code>、swizzle atomicity 和 <code>96 B</code> swizzle 的 target 边界并不相同。PTX 9.0 的 <code>sm_101*</code>→<code>sm_110*</code> 只是命名变化，不能统计为新的 TMA 功能 [S035][S036]。</p>
+<h2 id="ptx-9.29.3bulk-copy-的边界与内存语义">3.4 PTX 9.2–9.3：bulk copy 的边界与内存语义</h2>
+<h3 id="描述符变化-2">3.4.1 描述符变化</h3>
+<p>PTX 9.2–9.3 没有改变 Tiled descriptor、Im2col descriptor 或 W-only Im2col descriptor 的字段与取值。本节变化都发生在不使用 tensor map 的 <code>cp.async.bulk</code> 和 <code>cp.reduce.async.bulk</code> 上，因此没有需要逐项解释的描述符字段。</p>
+<h3 id="指令变化总表-2">3.4.2 指令变化总表</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>指令</th>
+<th>PTX 9.2–9.3 的变化</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>cp.async.bulk</code></td>
+<td>PTX 9.2：global→<code>.shared::cta</code> 增加 <code>.ignore_oob</code>、<code>ignoreBytesLeft</code> 和 <code>ignoreBytesRight</code><br>PTX 9.3：增加 <code>.sem</code>、<code>.scope</code> 和 <code>.type</code></td>
+<td>修改</td>
+</tr>
+<tr class="even">
+<td><code>cp.reduce.async.bulk</code></td>
+<td>PTX 9.3：增加可选的 <code>.sem.scope</code></td>
+<td>修改</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cp.async.bulk-1">3.4.3 <code>cp.async.bulk</code></h3>
+<pre class="ptx"><code>// PTX 9.2：允许 global source 两端包含少量越界 byte
+cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes.ignore_oob
+    [dstMem], [srcMem], size,
+    ignoreBytesLeft, ignoreBytesRight, [mbar];
+
+// PTX 9.3：显式指定 relaxed memory semantics
+cp.async.bulk.relaxed.cluster.shared::cta.global
+    .mbarrier::complete_tx::bytes.b128
+    [dstMem], [srcMem], size, [mbar];</code></pre>
+<p>相对前一版本，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>之前</th>
+<th>PTX 9.2–9.3</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.ignore_oob</code></td>
+<td>无</td>
+<td>可选</td>
+<td>新增</td>
+<td>允许 global source range 的开头、末尾各有最多 15 B 越出 allocation</td>
+</tr>
+<tr class="even">
+<td><code>ignoreBytesLeft</code></td>
+<td>无</td>
+<td><code>0</code>–<code>15</code></td>
+<td>新增</td>
+<td>指定 copy range 开头不读取的 byte 数</td>
+</tr>
+<tr class="odd">
+<td><code>ignoreBytesRight</code></td>
+<td>无</td>
+<td><code>0</code>–<code>15</code></td>
+<td>新增</td>
+<td>指定 copy range 末尾不读取的 byte 数</td>
+</tr>
+<tr class="even">
+<td><code>.sem</code></td>
+<td>隐式 weak</td>
+<td><code>.weak</code> / <code>.relaxed</code></td>
+<td>新增</td>
+<td>显式选择 weak access<br>或 relaxed strong access</td>
+</tr>
+<tr class="odd">
+<td><code>.scope</code></td>
+<td>无</td>
+<td><code>.cta</code> / <code>.cluster</code> / <code>.gpu</code> / <code>.sys</code></td>
+<td>新增</td>
+<td>指定 relaxed strong access 的 thread scope<br>合法取值由 copy direction 决定</td>
+</tr>
+<tr class="even">
+<td><code>.type</code></td>
+<td>无</td>
+<td><code>.b128</code></td>
+<td>新增</td>
+<td>指定 relaxed strong access 的 element-wise atomic size</td>
+</tr>
+</tbody>
+</table>
+<h4 id="ignore_oob"><code>.ignore_oob</code></h4>
+<p><code>.ignore_oob</code> 只适用于 global→<code>.shared::cta</code>。<code>ignoreBytesLeft</code> 和 <code>ignoreBytesRight</code> 分别从 source range 的开头和末尾划出不读取的 byte；两个操作数都只能取 <code>0</code>–<code>15</code>。与这些 source byte 对应的 destination 内容是 <strong>indeterminate</strong>，并不会自动填零。</p>
+<p>使用 <code>.ignore_oob</code> 后，<code>srcMem</code>、<code>dstMem</code> 仍须 16 B 对齐，<code>size</code> 仍须为 16 B 的倍数。若同时显式写出 report mechanism，只允许 <code>.mbarrier::report::disabled</code>。因此，它解决的是线性 allocation 边缘不足一个 16 B chunk 的访问问题，不等同于 tensor copy 的 OOB fill [S036][S038]。</p>
+<h4 id="sem"><code>.sem</code></h4>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>取值</th>
+<th>数据访问语义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.weak</code></td>
+<td>source read 与 destination write 都是 weak memory operations</td>
+</tr>
+<tr class="even">
+<td><code>.relaxed</code></td>
+<td>source read 与 destination write 都使用自然对齐的 strong memory operations<br>ordering 为 relaxed</td>
+</tr>
+</tbody>
+</table>
+<p>省略 <code>.sem</code> 时默认 <code>.weak</code>，与 PTX 9.3 以前的写法保持一致。选择 <code>.relaxed</code> 时必须同时写出 <code>.scope</code> 和 <code>.type</code>；这不是单独改变完成机制，异步操作仍通过 mbarrier 或 bulk async-group 判断完成 [S036]。</p>
+<h4 id="scope"><code>.scope</code></h4>
+<p><code>.scope</code> 指定 <code>.relaxed</code> 访问的 thread scope，合法集合取决于 copy direction：</p>
+<table>
+<thead>
+<tr class="header">
+<th>copy direction</th>
+<th><code>.scope</code> 的合法取值</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>global→<code>.shared::cta</code></td>
+<td><code>.cta</code> / <code>.cluster</code> / <code>.gpu</code> / <code>.sys</code></td>
+</tr>
+<tr class="even">
+<td>global→<code>.shared::cluster</code></td>
+<td><code>.cta</code> / <code>.cluster</code> / <code>.gpu</code> / <code>.sys</code></td>
+</tr>
+<tr class="odd">
+<td><code>.shared::cta</code>→global</td>
+<td><code>.cta</code> / <code>.cluster</code> / <code>.gpu</code> / <code>.sys</code></td>
+</tr>
+<tr class="even">
+<td><code>.shared::cta</code>→<code>.shared::cluster</code></td>
+<td><code>.cta</code> / <code>.cluster</code></td>
+</tr>
+</tbody>
+</table>
+<p>这里的 scope 描述 strong memory operation 的作用域，不改变 <code>.dst</code>、<code>.src</code> 所指定的数据搬运方向，也不表示 TMA 可以访问新的 memory state space。</p>
+<h4 id="type"><code>.type</code></h4>
+<p><code>cp.async.bulk</code> 的 relaxed 形式要求 <code>.type = .b128</code>。也就是说，strong access 以自然对齐的 128-bit 单元执行；这里的 <code>.type</code> 描述内存操作的 element-wise atomic size，不是被搬运数据的数值类型 [S036]。</p>
+<h3 id="cp.reduce.async.bulk">3.4.4 <code>cp.reduce.async.bulk</code></h3>
+<pre class="ptx"><code>// PTX 9.3：显式指定每个 destination reduction 的语义与 scope
+cp.reduce.async.bulk.relaxed.cluster
+    .shared::cluster.shared::cta
+    .mbarrier::complete_tx::bytes.add.u64
+    [dstMem], [srcMem], size, [mbar];</code></pre>
+<p>相对 PTX 9.2，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 9.2</th>
+<th>PTX 9.3</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.sem.scope</code></td>
+<td>不可显式指定</td>
+<td>可选的 <code>.relaxed.scope</code></td>
+<td>新增</td>
+<td>显式指定每个 destination element-wise reduction 的 memory semantics 与 thread scope</td>
+</tr>
+</tbody>
+</table>
+<h4 id="sem-与-.scope"><code>.sem</code> 与 <code>.scope</code></h4>
+<p><code>cp.reduce.async.bulk</code> 只允许 <code>.sem = .relaxed</code>。省略 <code>.sem.scope</code> 时默认 <code>.relaxed.sys</code>；显式写出时，<code>.scope</code> 的合法取值由 destination 决定：</p>
+<table>
+<thead>
+<tr class="header">
+<th>destination</th>
+<th><code>.scope</code> 的合法取值</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.shared::cluster</code></td>
+<td><code>.cta</code> / <code>.cluster</code></td>
+</tr>
+<tr class="even">
+<td>global</td>
+<td><code>.cta</code> / <code>.cluster</code> / <code>.gpu</code> / <code>.sys</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>.sem.scope</code> 只约束 destination 上逐元素 reduction 的内存语义：每个 reduction 在指定 scope 内是 atomic 的。对 <code>srcMem</code> 的读取仍是 weak memory operation。原有的 <code>.redOp</code>、<code>.type</code>、copy direction 和完成机制均未改变；其中 <code>.type</code> 仍表示 reduction element type，不能与 3.4.3 中 <code>cp.async.bulk</code> 新增且固定为 <code>.b128</code> 的 <code>.type</code> 混为一谈 [S036]。</p>
+<h2 id="ptx-9.4sm_107f-family-specific-扩展">3.5 PTX 9.4：<code>sm_107f</code> family-specific 扩展</h2>
+<p>NVIDIA 的 Rubin 架构博客说明 Rubin TMA 增加 descriptor override、数据完整性检查和更大的 multicast group；PTX 9.4 在 <code>sm_107f</code> family-specific target 上给出了与这些描述对应的精确接口 [S021][S037][S038]。当前公开 PTX target 表没有在同一处把某个 Rubin 产品名称直接写成 Compute Capability 10.7，因此本章只表述为“Rubin 官方能力描述与 <code>sm_107f</code> PTX 接口相对应”。</p>
+<h3 id="描述符变化-3">3.5.1 描述符变化</h3>
+<p>PTX 9.4 没有改变 Tiled descriptor、Im2col descriptor 或 W-only Im2col descriptor 的字段与取值。property override 只是让单次指令用显式操作数替代 descriptor 中的 global address、dimension 和 stride；<code>.im2col_no_offs::w</code>、report、32-bit multicast 和 cache priority 同样都是指令能力。因此，本节没有需要逐项解释的描述符字段。</p>
+<h3 id="指令变化总表-3">3.5.2 指令变化总表</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>指令</th>
+<th>PTX 9.4 的变化</th>
+<th>变化类型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>cp.async.bulk</code></td>
+<td>增加 <code>.multicast::cluster::32b</code><br>增加 <code>.report_mechanism</code></td>
+<td>修改</td>
+</tr>
+<tr class="even">
+<td><code>cp.async.bulk.tensor</code></td>
+<td>增加 property override<br><code>.im2col_no_offs::w</code><br><code>.multicast::cluster::32b</code><br><code>.report_mechanism</code></td>
+<td>修改</td>
+</tr>
+<tr class="odd">
+<td><code>cp.reduce.async.bulk.tensor</code></td>
+<td>增加 property override<br><code>.im2col_no_offs::w</code></td>
+<td>修改</td>
+</tr>
+<tr class="even">
+<td><code>cp.async.bulk.prefetch</code></td>
+<td>增加 <code>.L2::evict_last</code></td>
+<td>修改</td>
+</tr>
+<tr class="odd">
+<td><code>cp.async.bulk.prefetch.tensor</code></td>
+<td>增加 property override<br><code>.L2::evict_last</code></td>
+<td>修改</td>
+</tr>
+<tr class="even">
+<td><code>applypriority.async.bulk</code></td>
+<td>新增线性地址范围的 L2 priority 操作</td>
+<td>新增指令</td>
+</tr>
+<tr class="odd">
+<td><code>applypriority.async.bulk.tensor</code></td>
+<td>新增 tensor 地址范围的 L2 priority 操作<br>支持 property override</td>
+<td>新增指令</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cp.async.bulk-2">3.5.3 <code>cp.async.bulk</code></h3>
+<pre class="ptx"><code>// 32-bit multicast mask
+cp.async.bulk.shared::cluster.global
+    .mbarrier::complete_tx::bytes.multicast::cluster::32b
+    [dstMem], [srcMem], size, [mbar], ctaMask32;
+
+// source validity report
+cp.async.bulk.shared::cta.global
+    .mbarrier::complete_tx::bytes
+    .mbarrier::report::validity::per_16bytes::80000000
+    [dstMem], [srcMem], size, [mbar];</code></pre>
+<p>相对 PTX 9.3，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 9.3</th>
+<th>PTX 9.4</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.multicast</code></td>
+<td><code>.multicast::cluster</code><br>16-bit <code>ctaMask</code></td>
+<td><code>.multicast::cluster</code> / <code>.multicast::cluster::16b</code><br>增加 <code>.multicast::cluster::32b</code></td>
+<td>新增取值</td>
+<td>增加 32-bit multicast mask 形式</td>
+</tr>
+<tr class="even">
+<td><code>ctaMask</code></td>
+<td>16 bit</td>
+<td>16 bit / 32 bit</td>
+<td>新增形式</td>
+<td>bit <code>i</code> 选择 cluster CTA rank <code>i</code></td>
+</tr>
+<tr class="odd">
+<td><code>.report_mechanism</code></td>
+<td>无</td>
+<td>disabled / validity report</td>
+<td>新增</td>
+<td>copy source data 时检查指定 bit pattern<br>结果写入完成 mbarrier 的 report payload</td>
+</tr>
+</tbody>
+</table>
+<h4 id="multicast"><code>.multicast</code></h4>
+<table>
+<thead>
+<tr class="header">
+<th>取值</th>
+<th style="text-align: right;"><code>ctaMask</code> 宽度</th>
+<th style="text-align: right;">可编码 CTA rank</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.multicast::cluster</code> / <code>.multicast::cluster::16b</code></td>
+<td style="text-align: right;">16 bit</td>
+<td style="text-align: right;">0–15</td>
+</tr>
+<tr class="even">
+<td><code>.multicast::cluster::32b</code></td>
+<td style="text-align: right;">32 bit</td>
+<td style="text-align: right;">0–31</td>
+</tr>
+</tbody>
+</table>
+<p>bit <code>i</code> 对应 cluster CTA rank <code>i</code>。mask 宽度只决定指令能够编码的 rank 范围，不保证任意设备或任意 launch 都支持 32-CTA cluster；实际 cluster shape 仍受设备属性和 launch 约束 [S038]。</p>
+<h4 id="report_mechanism"><code>.report_mechanism</code></h4>
+<p>report mechanism 只用于 global→shared 的 mbarrier completion 形式。它在 copy source data 时检查指定 pattern，并把检查结果写入同一个完成 mbarrier 的 report payload；report 内容不是 transaction completion 状态本身。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>取值</th>
+<th>检查粒度</th>
+<th>匹配模式</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.mbarrier::report::disabled</code></td>
+<td>不检查</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><code>.mbarrier::report::validity::per_16bytes::80000000</code></td>
+<td>每 16 B 抽样 FP32</td>
+<td><code>-0</code></td>
+</tr>
+<tr class="odd">
+<td><code>.mbarrier::report::validity::per_16bytes::8000</code></td>
+<td>每 16 B 抽样 FP16</td>
+<td><code>-0</code></td>
+</tr>
+<tr class="even">
+<td><code>.mbarrier::report::validity::per_16bytes::80</code></td>
+<td>每 16 B 抽样 FP8</td>
+<td><code>-0</code></td>
+</tr>
+<tr class="odd">
+<td><code>.mbarrier::report::validity::per_16bytes::8</code></td>
+<td>每 16 B 抽样 FP4</td>
+<td><code>-0</code></td>
+</tr>
+<tr class="even">
+<td><code>.mbarrier::report::validity::per_element::ff</code></td>
+<td>每个 FP8/FP4 element</td>
+<td>NaN / <code>0xF</code> pattern</td>
+</tr>
+</tbody>
+</table>
+<p>匹配发生时，copy 对 mbarrier 执行 report-on，使 report predicate 非零。启用 validity report 时，mbarrier 必须使用 <code>.layout::v1</code>；省略 <code>.report_mechanism</code> 时默认 disabled [S038]。</p>
+<p><code>-0</code> 并不是非法浮点数。PTX 只规定 TMA 检查这些 bit pattern，没有说明选择 <code>-0</code> 的设计动机。一个合理的工程解释是把 <code>-0</code> 用作 sentinel/poison：FP32 的 <code>+0</code> 为 <code>0x00000000</code>，<code>-0</code> 为 <code>0x80000000</code>，二者在多数普通算术中数值等价，但可以通过 bit pattern 区分。生产者可以预先在约定的检查位置写入 <code>-0</code>，正常数据应覆盖该标记；TMA 搬运时若仍采样到 <code>-0</code>，便报告可能存在未写入或无效数据。</p>
+<p><code>per_16bytes</code> 每个对齐 16 B 块只检查 sampled element，更像是检测预先布置的块级标记，而不是判断任意业务数值是否异常。这一用途属于根据接口形式作出的推测，不能写成 NVIDIA 已公开确认的设计目的；若业务数据本来允许出现 <code>-0</code>，该检查也可能报告合法数据。它只能检测指定 pattern，不能替代 ECC、CRC 或通用完整性校验 [S040]。</p>
+<p>延伸阅读：<a href="https://docs.nvidia.com/cuda/parallel-thread-execution/#report-mechanisms-for-asynchronous-copy-operations">NVIDIA PTX ISA：Report Mechanisms</a>、<a href="https://nvidia.github.io/cccl/unstable/libcudacxx/ptx/instructions/cp_async_bulk_tensor.html">CUDA Core Compute Libraries：<code>cp.async.bulk.tensor</code></a>、<a href="https://llvm.org/docs/NVPTXUsage.html">LLVM NVPTX Backend：TMA report mechanism 映射</a>、<a href="https://chromium.googlesource.com/external/github.com/llvm/llvm-project/+/cc798fb63ca1a08f43cdcd314b66a96fa973e584">LLVM 对 PTX 9.4 TMA intrinsics 的实现改动</a>。</p>
+<h3 id="cp.async.bulk.tensor-1">3.5.4 <code>cp.async.bulk.tensor</code></h3>
+<pre class="ptx"><code>// 单次 tensor copy 覆盖 global address、dimension 和 stride
+cp.async.bulk.tensor.3d.shared::cta.global.tile
+    .mbarrier::complete_tx::bytes
+    .override::global_address.override::global_dim_stride
+    [dstMem],
+    [tensorMap, gAddrToOverride, attributeOverrideInfo, {0, 0, 0}],
+    [mbar];
+
+// W-only no-offset store
+cp.async.bulk.tensor.4d.global.shared::cta.im2col_no_offs::w.bulk_group
+    [tensorMap, tensorCoords], [srcMem];</code></pre>
+<p>相对 PTX 9.3，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 9.3</th>
+<th>PTX 9.4</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.override::global_address</code></td>
+<td>无</td>
+<td>可选</td>
+<td>新增</td>
+<td>用 <code>gAddrToOverride</code> 替代 descriptor 的 global base address</td>
+</tr>
+<tr class="even">
+<td><code>.override_attribute</code></td>
+<td>无</td>
+<td><code>.override::global_dim</code><br><code>.override::global_dim_stride</code></td>
+<td>新增</td>
+<td>用 <code>attributeOverrideInfo</code> 替代 descriptor 的 global dimension<br>或同时替代 dimension 与 stride</td>
+</tr>
+<tr class="odd">
+<td><code>.load_mode</code></td>
+<td>原有取值</td>
+<td>增加 <code>.im2col_no_offs::w</code></td>
+<td>新增取值</td>
+<td>W-only tensor store，不提供动态 W offset</td>
+</tr>
+<tr class="even">
+<td><code>.multicast</code></td>
+<td>16-bit mask</td>
+<td>增加 <code>.multicast::cluster::32b</code></td>
+<td>新增取值</td>
+<td>将可编码的 destination CTA rank 扩到 0–31</td>
+</tr>
+<tr class="odd">
+<td><code>.report_mechanism</code></td>
+<td>无</td>
+<td>disabled / validity report</td>
+<td>新增</td>
+<td>检查 global source data，并通过完成 mbarrier 返回 report</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overrideglobal_address"><code>.override::global_address</code></h4>
+<p>指定该 qualifier 后，指令忽略 descriptor 中的 global base address，改用显式的 64-bit <code>gAddrToOverride</code>。该地址必须 16 B 对齐，否则触发 runtime error；执行时 <code>[gAddrToOverride, gAddrToOverride + 128 KiB)</code> 必须已分配且可访问，否则行为未定义。只覆盖 address 时，descriptor 中的 dimension、stride、box、element type 和 swizzle 等字段仍然生效 [S037]。</p>
+<h4 id="override_attribute"><code>.override_attribute</code></h4>
+<p><code>.override_attribute</code> 必须与 <code>.override::global_address</code> 同时出现，不能单独保留 descriptor address 而只覆盖 dimension 或 stride。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>tensor 维数</th>
+<th><code>.override_attribute</code> 取值</th>
+<th><code>attributeOverrideInfo</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1D</td>
+<td><code>.override::global_dim</code></td>
+<td>一个 <code>.b8</code> 或 <code>.b16</code> 的 <code>tensorSizeToOverride</code></td>
+</tr>
+<tr class="even">
+<td>2D–5D</td>
+<td><code>.override::global_dim_stride</code></td>
+<td><code>.dim</code> 个 size<br><code>.dim - 1</code> 个 lower stride<br>一个 packed upper-stride <code>.b16</code></td>
+</tr>
+</tbody>
+</table>
+<p><img src="assets/20-descriptor-override.svg" alt="PTX 9.4 使用显式操作数覆盖 descriptor 中的地址、dimension 与 stride" /></p>
+<p>对 2D–5D，每个 stride 由低 32 bit 与打包在 <code>.b16</code> 中的 4-bit 高位恢复：</p>
+<pre class="text"><code>globalStride[i] =
+    ((lowerStride[i] + (upperStride[i] &lt;&lt; 32)) &lt;&lt; 4)</code></pre>
+<p>因此 stride 以 16 B 为单位编码。<code>tensorSizeToOverride</code> 使用 <code>.b16</code> register 时，有效值仍位于低 8 bit。attribute override 还要求 <code>.load_mode = .tile</code>、<code>tensorCoords</code> 全为 0；若同时使用 multicast，只允许 <code>.multicast::cluster::32b</code>。descriptor 的 element type、box、interleave、swizzle 等 layout 信息继续生效 [S037]。</p>
+<h4 id="load_mode-1"><code>.load_mode</code></h4>
+<p><code>.im2col_no_offs::w</code> 是新增的 W-only store mode：访问数量来自 W-only descriptor 的 <code>pixelsPerColumn</code>，<code>wHalo</code> 和 <code>wOffset</code> 固定为 0，因此指令末尾没有 <code>im2colInfo</code>。</p>
+<p>由于方向是 shared→global，bounding box 必须始终位于 tensor boundary 内：Lower-Corner-W 必须非负，Upper-Corner-W 必须非正；非法的 OOB store 会触发 runtime error。它与 load 侧可以通过 OOB fill 生成 padding 的 <code>.im2col::w</code> 不对称 [S038]。</p>
+<h4 id="multicast-1"><code>.multicast</code></h4>
+<p>与 3.5.3 相同，tensor copy 增加 <code>.multicast::cluster::32b</code> 和 32-bit <code>ctaMask</code>。property attribute override 与 multicast 同时使用时，只允许该 32-bit 形式。</p>
+<h4 id="report_mechanism-1"><code>.report_mechanism</code></h4>
+<p>与 3.5.3 相同，global→shared tensor copy 可以检查 global source data，并把 validity report 写入 <code>.layout::v1</code> mbarrier；检查模式和 payload 语义不变。</p>
+<h3 id="cp.reduce.async.bulk.tensor">3.5.5 <code>cp.reduce.async.bulk.tensor</code></h3>
+<pre class="ptx"><code>cp.reduce.async.bulk.tensor.4d.global.shared::cta.add
+    .im2col_no_offs::w.bulk_group
+    [tensorMap, tensorCoords], [srcMem];</code></pre>
+<p>相对 PTX 9.3，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 9.3</th>
+<th>PTX 9.4</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.override::global_address</code></td>
+<td>无</td>
+<td>可选</td>
+<td>新增</td>
+<td>用显式地址替代 descriptor 的 global base address</td>
+</tr>
+<tr class="even">
+<td><code>.override_attribute</code></td>
+<td>无</td>
+<td><code>.override::global_dim</code><br><code>.override::global_dim_stride</code></td>
+<td>新增</td>
+<td>覆盖 global dimension<br>或同时覆盖 dimension 与 stride</td>
+</tr>
+<tr class="odd">
+<td><code>.load_mode</code></td>
+<td>原有取值</td>
+<td>增加 <code>.im2col_no_offs::w</code></td>
+<td>新增取值</td>
+<td>对 W-only global tensor 执行 no-offset reduction</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overrideglobal_address-1"><code>.override::global_address</code></h4>
+<p>该字段及 <code>gAddrToOverride</code> 的含义和约束与 3.5.4 相同。区别只在最终 operation 是 tensor reduction，而不是普通 tensor copy；address override 不改变 <code>.redOp</code> 或 reduction element type。</p>
+<h4 id="override_attribute-1"><code>.override_attribute</code></h4>
+<p>该字段、<code>attributeOverrideInfo</code> 的编码和组合约束与 3.5.4 相同。attribute override 仍须同时使用 <code>.override::global_address</code>。</p>
+<h4 id="load_mode-2"><code>.load_mode</code></h4>
+<p><code>.im2col_no_offs::w</code> 的 W-only traversal、<code>pixelsPerColumn</code>、固定为 0 的 <code>wHalo/wOffset</code> 和 global boundary 约束均与 3.5.4 相同；区别是 source 数据与 global tensor destination 做逐元素 reduction [S038]。</p>
+<h3 id="cp.async.bulk.prefetch">3.5.6 <code>cp.async.bulk.prefetch</code></h3>
+<pre class="ptx"><code>cp.async.bulk.prefetch.L2.global.L2::evict_last [srcMem], size;</code></pre>
+<p>相对 PTX 9.3，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 9.3</th>
+<th>PTX 9.4</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.level::eviction_priority</code></td>
+<td>无</td>
+<td><code>.L2::evict_last</code></td>
+<td>新增</td>
+<td>将预取 cache line 标记为较晚驱逐</td>
+</tr>
+</tbody>
+</table>
+<h4 id="leveleviction_priority"><code>.level::eviction_priority</code></h4>
+<p><code>.L2::evict_last</code> 在发起 L2 prefetch 的同时提高对应 cache line 的保留优先级。它是 cache replacement hint，不提供显式完成对象，也不改变程序的 memory consistency [S038]。</p>
+<h3 id="cp.async.bulk.prefetch.tensor-1">3.5.7 <code>cp.async.bulk.prefetch.tensor</code></h3>
+<pre class="ptx"><code>cp.async.bulk.prefetch.tensor.3d.L2.global.tile.L2::evict_last
+    .override::global_address.override::global_dim_stride
+    [tensorMap, gAddrToOverride, attributeOverrideInfo, {0, 0, 0}];</code></pre>
+<p>相对 PTX 9.3，字段变化如下：</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>PTX 9.3</th>
+<th>PTX 9.4</th>
+<th>变化类型</th>
+<th>含义或改动</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.level::eviction_priority</code></td>
+<td>无</td>
+<td><code>.L2::evict_last</code></td>
+<td>新增</td>
+<td>预取 tensor 对应的 cache line，并标记为较晚驱逐</td>
+</tr>
+<tr class="even">
+<td><code>.override::global_address</code></td>
+<td>无</td>
+<td>可选</td>
+<td>新增</td>
+<td>用显式地址替代 descriptor 的 global base address</td>
+</tr>
+<tr class="odd">
+<td><code>.override_attribute</code></td>
+<td>无</td>
+<td><code>.override::global_dim</code><br><code>.override::global_dim_stride</code></td>
+<td>新增</td>
+<td>覆盖 global dimension<br>或同时覆盖 dimension 与 stride</td>
+</tr>
+</tbody>
+</table>
+<h4 id="leveleviction_priority-1"><code>.level::eviction_priority</code></h4>
+<p>与 3.5.6 相同，<code>.L2::evict_last</code> 只改变 cache replacement priority；tensor 形式仍是 prefetch hint，没有显式完成对象。</p>
+<h4 id="overrideglobal_address-2"><code>.override::global_address</code></h4>
+<p>该字段及 <code>gAddrToOverride</code> 的含义和约束与 3.5.4 相同；这里只把 override 后的 tensor address range 预取到 L2，不搬入 shared memory。</p>
+<h4 id="override_attribute-2"><code>.override_attribute</code></h4>
+<p>该字段、<code>attributeOverrideInfo</code> 的编码和组合约束与 3.5.4 相同，仍须同时使用 <code>.override::global_address</code> [S037][S038]。</p>
+<h3 id="applypriority.async.bulk">3.5.8 <code>applypriority.async.bulk</code></h3>
+<pre class="ptx"><code>applypriority.async.bulk.global.bulk_group.L2::evict_normal
+    [a], size;</code></pre>
+<p>这是 PTX 9.4 新增指令，字段如下：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段或操作数</th>
+<th>取值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.src</code></td>
+<td><code>.global</code> / 省略</td>
+<td>指定 global 或 generic address</td>
+</tr>
+<tr class="even">
+<td><code>.completion_mechanism</code></td>
+<td><code>.bulk_group</code></td>
+<td>将操作加入当前线程的 bulk async-group</td>
+</tr>
+<tr class="odd">
+<td><code>.level::eviction_priority</code></td>
+<td><code>.L2::evict_normal</code></td>
+<td>把指定 L2 address range 恢复为普通驱逐优先级</td>
+</tr>
+<tr class="even">
+<td><code>a</code></td>
+<td>128 B 对齐</td>
+<td>priority 操作的起始地址</td>
+</tr>
+<tr class="odd">
+<td><code>size</code></td>
+<td>16 B 的倍数</td>
+<td>priority 操作覆盖的 byte 数</td>
+</tr>
+</tbody>
+</table>
+<p><code>applypriority.async.bulk</code> 不搬运数据，只异步修改指定 L2 cache line 的 eviction priority。该操作被视为 weak memory operation；<code>.bulk_group</code> 的提交和等待规则与第二章相同 [S038]。</p>
+<h3 id="applypriority.async.bulk.tensor">3.5.9 <code>applypriority.async.bulk.tensor</code></h3>
+<pre class="ptx"><code>applypriority.async.bulk.tensor.3d.global.bulk_group.tile.L2::evict_normal
+    [tensorMap, tensorCoords];</code></pre>
+<p>这是 PTX 9.4 新增的 tensor 形式，字段如下：</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>字段</th>
+<th>取值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>.dim</code></td>
+<td><code>.1d</code>–<code>.5d</code></td>
+<td>tensor 维数</td>
+</tr>
+<tr class="even">
+<td><code>.src</code></td>
+<td><code>.global</code> / 省略</td>
+<td>tensor 所在 state space</td>
+</tr>
+<tr class="odd">
+<td><code>.completion_mechanism</code></td>
+<td><code>.bulk_group</code></td>
+<td>将操作加入当前线程的 bulk async-group</td>
+</tr>
+<tr class="even">
+<td><code>.load_mode</code></td>
+<td><code>.tile</code> / <code>.tile::gather4</code> / <code>.im2col</code><br><code>.im2col::w</code> / <code>.im2col::w::128</code></td>
+<td>选择要恢复 priority 的 tensor address range</td>
+</tr>
+<tr class="odd">
+<td><code>.level::eviction_priority</code></td>
+<td><code>.L2::evict_normal</code></td>
+<td>恢复普通驱逐优先级</td>
+</tr>
+<tr class="even">
+<td><code>.override::global_address</code></td>
+<td>可选</td>
+<td>覆盖 descriptor 的 global base address</td>
+</tr>
+<tr class="odd">
+<td><code>.override_attribute</code></td>
+<td>可选</td>
+<td>覆盖 global dimension<br>或同时覆盖 dimension 与 stride</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overrideglobal_address-3"><code>.override::global_address</code></h4>
+<p>该字段及 <code>gAddrToOverride</code> 的含义和约束与 3.5.4 相同。address override 改变本次 priority 操作所覆盖的 tensor base address。</p>
+<h4 id="override_attribute-3"><code>.override_attribute</code></h4>
+<p>该字段、<code>attributeOverrideInfo</code> 的编码和组合约束与 3.5.4 相同，仍须同时使用 <code>.override::global_address</code>。该指令只对最终计算出的 tensor address range 应用 <code>.L2::evict_normal</code>，不搬运或修改 tensor data；完成由 bulk async-group 观察 [S037][S038]。</p>
+<p>以上 PTX 9.4 扩展均要求 <code>sm_107f</code> 或同一 family 中的后续 target。这里的 target 条件描述 PTX 接口可用性，不等价于所有设备都支持相同的 cluster shape 或 cache 行为。</p>
+<h2 id="代际变化总结">3.6 代际变化总结</h2>
+<p>下图将 TMA 的代际变化放在同一组坐标中：横轴按 NVIDIA 架构与 PTX ISA 版本推进，纵轴依次观察描述符与动态寻址、数据选择与形状变换、搬运方向与存储空间、CTA 与 Cluster 协作，以及搬运控制与附加语义。圆点表示能力首次出现，菱形表示对既有能力的扩展，横线表示该能力在后续版本中继续存在。</p>
+<p><img src="assets/21-tma-evolution-map.svg" alt="TMA 能力的 PTX 与架构演进" /></p>
+<p>从纵向看，Hopper 建立了 descriptor 驱动的异步搬运、基础 tile/Im2col、multicast、mbarrier 和 cache-policy 等能力；Blackwell 主要扩展一次 operation 的数据选择、shared destination 和 CTA 协作方式；PTX 9.2–9.3 补充边界与内存语义；PTX 9.4 则进一步加入指令级 property override、32-bit multicast mask、有效性报告和 cache priority 操作。下表对图中的变化作精确展开。</p>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>能力维度</th>
+<th>Hopper / PTX 8.0–8.3</th>
+<th>Blackwell 主扩展 / PTX 8.6–8.8</th>
+<th>PTX 9.2–9.3</th>
+<th><code>sm_107f</code> / PTX 9.4</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>descriptor</td>
+<td>tiled + 通用 im2col<br>基础 swizzle</td>
+<td>W-only im2col<br>sub-byte 类型<br>atomic swizzle、<code>96 B</code> swizzle</td>
+<td>无变化</td>
+<td>descriptor 本体无新增字段</td>
+</tr>
+<tr class="even">
+<td>shared destination</td>
+<td>cluster-addressed</td>
+<td>增加 CTA-local destination</td>
+<td>—</td>
+<td>保留</td>
+</tr>
+<tr class="odd">
+<td>线性 bulk copy</td>
+<td>整段 copy</td>
+<td>增加重复 16 B byte mask</td>
+<td>增加边缘 OOB<br>与 strong-operation 语义</td>
+<td>增加 validity report</td>
+</tr>
+<tr class="even">
+<td>tiled access</td>
+<td>连续 tile</td>
+<td>四行 gather/scatter</td>
+<td>—</td>
+<td>32-bit multicast mask</td>
+</tr>
+<tr class="odd">
+<td>im2col instruction</td>
+<td>通用 offsets</td>
+<td>W-only load variants</td>
+<td>—</td>
+<td>W-only no-offset store/reduce</td>
+</tr>
+<tr class="even">
+<td>CTA 协作表达</td>
+<td>destination/multicast</td>
+<td>CTA-pair mbarrier routing</td>
+<td>—</td>
+<td>multicast mask 扩到 32 bit</td>
+</tr>
+<tr class="odd">
+<td>descriptor 动态使用</td>
+<td>device-side replace + proxy publish</td>
+<td>replace 支持新的 element/swizzle 值</td>
+<td>—</td>
+<td>指令级 address/dimension/stride override</td>
+</tr>
+<tr class="even">
+<td>cache 控制</td>
+<td>cache-policy hint<br>L2 prefetch</td>
+<td>保留</td>
+<td>保留</td>
+<td>prefetch：<code>evict_last</code><br>applypriority：<code>evict_normal</code></td>
+</tr>
+</tbody>
+</table>
+<p>从 PTX 接口看，Blackwell 的重点是扩大一次 TMA operation 能表达的数据选择与 CTA 协作方式：本地 destination、byte mask、四行 gather/scatter、W-only im2col 和 CTA-pair 通知。PTX 9.4 的重点是降低 descriptor 重用和运行期适配成本，并在 copy path 上附加数据有效性报告与 cache 生命周期控制。</p>
+<p>以上结论只说明 PTX 对软件暴露的架构契约。<code>.shared::cta</code> 是否对应独立快速路径、gather4/scatter4 如何生成硬件请求、override 是否绕过 descriptor decode、report 与 cache-priority 操作由哪些硬件模块执行，仍需由后续 SASS 和硬件章节验证。</p>
+<h2 id="第三章复核记录">第三章复核记录</h2>
+<ul>
+<li>2026-10-20：按 PTX ISA 8.7 历史归档复核 PTX 8.6 新增 qualifier、operand、target 和 gather/scatter/im2col/CTA-group 约束。</li>
+<li>2026-10-20：按 PTX ISA 8.8 与 9.0 复核 <code>a</code>/<code>f</code> target 分化、<code>96 B</code> swizzle 和 <code>sm_101*</code>→<code>sm_110*</code> 重命名，未把 target 改名统计为功能新增。</li>
+<li>2026-10-20：按 PTX ISA 9.2/9.3 复核 <code>.ignore_oob</code> 与 <code>.weak/.relaxed.scope.b128</code>，并将其与 tensor descriptor OOB fill、完成机制分开。</li>
+<li>2026-10-20：按 PTX ISA 9.4 逐项复核 property override 的 operand packing、组合限制、32-bit multicast、report mechanism 和 cache priority 指令。</li>
+<li>2026-10-20：交叉检查 Rubin 官方博客；保留 <code>sm_107f</code> 与具体 Rubin 产品 CC 映射的证据边界，不以功能描述替代正式产品表。</li>
+<li>2026-10-21：按第二章“描述符—字段—指令全集—逐指令”的结构重新组织；将 descriptor override 与 <code>tensormap.replace</code> 变化归入指令部分。</li>
+<li>2026-10-21：将原 3.2.1/3.2.2 合并为完整的 3.2.1：Tiled、Im2col 各自在本节解释 <code>swizzle</code>，W-only Im2col 在本节逐项解释其新增或变化字段；后续指令章节编号前移。</li>
+<li>2026-10-21：按 3.2 与第二章的对象层级重写 3.3，将 descriptor 字段取值、<code>tensormap.replace</code> 操作数扩展和 target 演进分开，并补全 packed sub-byte 与 <code>96 B</code> swizzle 的组合约束。</li>
+</ul>
+<hr />
+<p><a href="index.html">返回系列目录</a> · <a href="02-hopper-ptx.html">上一篇：Hopper 第一代 TMA 的 PTX 设计</a> · <a href="references.html">参考资料索引</a></p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-21<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/03-blackwell-rubin-ptx.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
