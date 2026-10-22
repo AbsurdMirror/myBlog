@@ -1,7 +1,7 @@
 ---
 title: NVIDIA TMA（一）：产品迭代与 TMA 概述
 status: published
-updated: 2026-10-20
+updated: 2026-10-22
 ---
 
 # 第一章：NVIDIA 产品迭代与 TMA 概述
@@ -28,7 +28,7 @@ updated: 2026-10-20
 | bulk asynchronous copy | 不使用 tensor map 的一维连续大粒度异步拷贝 |
 | bulk-tensor asynchronous copy | 使用 tensor map 的一至五维张量异步拷贝 |
 | tensor map / TMA descriptor | 描述全局张量及其 TMA 访问属性的不透明对象 |
-| TMA unit / engine | 官方架构资料所称的异步拷贝硬件单元；内部结构留到第四章分析 |
+| TMA unit / engine | 官方架构资料所称的异步拷贝硬件单元；内部结构留待后续硬件实现分析 |
 
 ### 1.1.2 官方名称
 
@@ -65,7 +65,7 @@ NVIDIA 文档先后使用过两种全称：
 | 功能阶段 | PTX 或官方架构资料给出新的 TMA 对外能力，且适用 target 可以确定 |
 | 硬件实现代际 | SASS、微架构资料或性能实验显示执行单元、数据路径、队列或吞吐机制发生实质变化 |
 
-第一章可以确定产品扩展和功能阶段。硬件实现代际需要第三章的 SASS 证据与第四章的硬件、专利和性能证据共同确认。
+第一章可以确定产品扩展和功能阶段。硬件实现代际仍需结合后续的 SASS、硬件资料、专利和性能实验共同确认。
 
 ## 1.2 TMA 的技术前身与引入动机
 
@@ -148,7 +148,7 @@ NVIDIA 当前产品表给出的映射如下 [S011]：
 - `sm_100f`、`sm_103f`、`sm_120f` 等 `f` target 表示同一 family 共享的特性集合；
 - 同一产品品牌下的不同 Compute Capability 可以具有不同的 tensor mode、数据类型、swizzle 或其他限制。
 
-以 multicast 为例，CUDA Programming Guide 建议在 `sm_90a` 上使用其优化路径；PTX 的其他 TMA 扩展也分别规定最低 target 或 `a/f` target [S001][S018]。第二章将按指令变体记录这些限制。
+以 multicast 为例，CUDA Programming Guide 建议在 `sm_90a` 上使用其优化路径；PTX 的其他 TMA 扩展也分别规定最低 target 或 `a/f` target [S001][S018]。[第二章](02-hopper-ptx.md)记录 Hopper 变体的 target 限制，[第三章](03-blackwell-rubin-ptx.md)继续整理 Blackwell 与 Rubin 的 target 分化。
 
 ## 1.4 Hopper：首代 TMA 的能力基线
 
@@ -191,7 +191,7 @@ PTX 8.0 建立了 Hopper TMA 的公共能力基线 [S002][S003][S012]：
 
 | 维度 | Ampere `cp.async` | Hopper TMA |
 |---|---|---|
-| 单条操作的描述粒度 | 每线程 4/8/16B | 单线程可描述大块或整个 tile |
+| 单条操作的描述粒度 | 每线程 4/8/16 B | 单线程可描述大块或整个 tile |
 | 地址生成 | 线程计算各项地址并遍历区域 | 硬件依据 tensor map 与坐标生成地址 |
 | 形状表达 | 小粒度一维 global-to-shared | 连续块与 1D–5D tensor mode |
 | 传输路径 | global-to-shared | global/shared 双向及 cluster shared 路径 |
@@ -232,7 +232,7 @@ PTX 8.8 还引入 family-specific target，使部分特性可以在同一 GPU fa
 
 Blackwell 数据中心和 workstation/consumer 产品分布在 CC 10.0、10.3、12.0 与 12.1；同期产品表还列出 CC 11.0 的 Jetson 分支。PTX 对 `sm_100/103`、`sm_110` 与 `sm_120/121` 的指令变体和限制分别定义；`a` target 和 `f` target 又提供不同的特性集合 [S011][S018][S023]。
 
-因此，后续独立文章将把 Blackwell 数据中心、Jetson、workstation/consumer 和 GB10 分支分别映射到具体 target。本文的“Blackwell 功能阶段”表示这一时期出现了确定的 TMA 接口增量，不表示所有相关产品拥有完全相同的 TMA 指令集合 [S018][S023]。
+因此，[第三章](03-blackwell-rubin-ptx.md)将 Blackwell 数据中心、Jetson、workstation/consumer 和 GB10 分支分别映射到具体 target。本文的“Blackwell 功能阶段”表示这一时期出现了确定的 TMA 接口增量，不表示所有相关产品拥有完全相同的 TMA 指令集合 [S018][S023]。
 
 ### 1.5.4 Blackwell Ultra：产品与 target 扩展
 
@@ -322,11 +322,11 @@ MoE 推理会在运行时把 token 路由到不同 expert。各 expert 的权重
 
 - `cp.async.bulk`、`cp.reduce.async.bulk` 与 bulk prefetch；
 - `cp.async.bulk.tensor`、`cp.reduce.async.bulk.tensor` 与 tensor prefetch；
-- tensor map 创建、字段、`tensormap.replace` 与 instruction-time override；
+- tensor map 创建、字段与 `tensormap.replace`；
 - mbarrier、bulk async-group、async proxy 与 proxy fence；
 - PTX 8.0 首发能力、PTX 8.3 的 descriptor 更新能力及 Hopper target requirements。
 
-Blackwell 的 PTX 8.6–8.8 增量与 Rubin 的 PTX 9.4 descriptor override 将作为后续独立文章展开，不在第二章中预告为已经覆盖。再后续的文章会把 PTX 变体映射到 SASS，并结合官方硬件资料、专利和性能实验判断 TMA 的内部实现与硬件代际。
+[第三章](03-blackwell-rubin-ptx.md)进一步展开 Blackwell 的 PTX 8.6–8.8 增量与 Rubin 的 PTX 9.4 descriptor override。再后续的文章会把 PTX 变体映射到 SASS，并结合官方硬件资料、专利和性能实验判断 TMA 的内部实现与硬件代际。
 
 ## 1.9 关键结论的证据等级
 

@@ -1,12 +1,12 @@
 ---
 title: NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计
 status: published
-updated: 2026-10-20
+updated: 2026-10-22
 ---
 
 # 第二章：Hopper 第一代 TMA 的 PTX 设计
 
-> 本文是 [NVIDIA TMA 调研系列](index.md) 第二章，聚焦 Hopper/PTX 8.0–8.3。上一篇：[NVIDIA 产品迭代与 TMA 概述](01-overview.md)；引用编号见[参考资料索引](references.md)。Blackwell PTX 8.6–8.8 与 Rubin PTX 9.4 的演进将由后续独立文章展开。
+> 本文是 [NVIDIA TMA 调研系列](index.md) 第二章，聚焦 Hopper/PTX 8.0–8.3。上一篇：[NVIDIA 产品迭代与 TMA 概述](01-overview.md)；下一篇：[Blackwell 与 Rubin 的 TMA PTX 演进](03-blackwell-rubin-ptx.md)；引用编号见[参考资料索引](references.md)。
 
 > 范围：Hopper / Compute Capability 9.0；以 PTX ISA 8.0 首发接口为基线，补充 PTX 8.3 的 Hopper descriptor 修改与 proxy 指令  
 > 资料回指：[参考资料索引](references.md)
@@ -37,14 +37,14 @@ PTX 不定义其内部字段布局。下面只列 CUDA Driver API 对外提供�
 |---|---:|---:|---|
 | `tensorDataType` | 1 | enum | 13 种数据类型，枚举值 0–12 |
 | `tensorRank` | 1 | `uint32_t` | 1–5 |
-| `globalAddress` | 1 | pointer | 无 interleave 或 16B interleave 时至少 16 B 对齐；32B interleave 时至少 32 B 对齐 |
+| `globalAddress` | 1 | pointer | 无 interleave 或 16 B interleave 时至少 16 B 对齐；32 B interleave 时至少 32 B 对齐 |
 | `globalDim[i]` | rank | `uint64_t[]` | 每维 1–2³² 个元素 |
-| `globalStrides[i]` | rank − 1 | `uint64_t[]` | byte；16 B 的倍数且 `< 2⁴⁰`；32B interleave 时为 32 B 的倍数 |
+| `globalStrides[i]` | rank − 1 | `uint64_t[]` | byte；16 B 的倍数且 `< 2⁴⁰`；32 B interleave 时为 32 B 的倍数 |
 | `boxDim[i]` | rank | `uint32_t[]` | 每维 1–256 个元素 |
 | `elementStrides[i]` | rank | `uint32_t[]` | 每维 1–8 个元素 |
-| `interleave` | 1 | enum | none、16B、32B |
-| `swizzle` | 1 | enum | none、32B、64B、128B |
-| `l2Promotion` | 1 | enum | none、64B、128B、256B |
+| `interleave` | 1 | enum | none、16 B、32 B |
+| `swizzle` | 1 | enum | none、32 B、64 B、128 B |
+| `l2Promotion` | 1 | enum | none、64 B、128 B、256 B |
 | `oobFill` | 1 | enum | zero、OOB-NaN |
 
 #### Im2col descriptor
@@ -92,7 +92,7 @@ PTX `tensormap.replace.elemtype` 使用另一套立即数映射，不应直接�
 
 #### `globalAddress`
 
-global tensor 的起始地址。无 interleave 或 16B interleave 时至少 16 B 对齐；32B interleave 时至少 32 B 对齐 [S028]。
+global tensor 的起始地址。无 interleave 或 16 B interleave 时至少 16 B 对齐；32 B interleave 时至少 32 B 对齐 [S028]。
 
 #### `globalDim[i]`
 
@@ -100,7 +100,7 @@ global tensor 的起始地址。无 interleave 或 16B interleave 时至少 16 B
 
 #### `globalStrides[i]`
 
-从一个高维切片移动到下一个切片所需的 byte distance，单位是**字节**。rank 为 `R` 时只需要 `R-1` 个 stride，因为维度 0 的相邻元素距离由数据类型和 interleave 规则确定。Hopper 要求 stride 为 16 B 的倍数且小于 2⁴⁰；32B interleave 时还必须是 32 B 的倍数 [S028]。
+从一个高维切片移动到下一个切片所需的 byte distance，单位是**字节**。rank 为 `R` 时只需要 `R-1` 个 stride，因为维度 0 的相邻元素距离由数据类型和 interleave 规则确定。Hopper 要求 stride 为 16 B 的倍数且小于 2⁴⁰；32 B interleave 时还必须是 32 B 的倍数 [S028]。
 
 #### `boxDim[i]`
 
@@ -114,15 +114,15 @@ bounding box 在第 `i` 维遍历 global tensor 时的元素步长，单位是**
 
 #### `interleave`
 
-说明 global-memory tensor 的物理 channel interleave 布局。Hopper 支持 none、16B 和 32B。interleave 不是 shared-memory swizzle：前者解释 global 侧的交错存储，后者决定数据到达 shared memory 后的排布。启用 interleave 时 rank 至少为 3；32B interleave 还提高 global address 和 global stride 的对齐要求 [S027][S028]。
+说明 global-memory tensor 的物理 channel interleave 布局。Hopper 支持 none、16 B 和 32 B。interleave 不是 shared-memory swizzle：前者解释 global 侧的交错存储，后者决定数据到达 shared memory 后的排布。启用 interleave 时 rank 至少为 3；32 B interleave 还提高 global address 和 global stride 的对齐要求 [S027][S028]。
 
 #### `swizzle`
 
-指定数据写入或读出 shared memory 时使用的 bank swizzle，Hopper 支持 none、32B、64B 和 128B。无 interleave 时，最内层 bounding-box byte width 不得超过所选 swizzle span；32B interleave 预期与 32B swizzle 配合。swizzle 不改变 global tensor 的逻辑坐标，而改变 shared-memory 线性数据的物理排列 [S027][S028]。
+指定数据写入或读出 shared memory 时使用的 bank swizzle，Hopper 支持 none、32 B、64 B 和 128 B。无 interleave 时，最内层 bounding-box byte width 不得超过所选 swizzle span；32 B interleave 预期与 32 B swizzle 配合。swizzle 不改变 global tensor 的逻辑坐标，而改变 shared-memory 线性数据的物理排列 [S027][S028]。
 
 #### `l2Promotion`
 
-指定从 DRAM 填充到 L2 时建议采用的 fetch granularity：none、64B、128B 或 256B。它是缓存填充策略字段，不改变 tensor 的逻辑 shape、坐标或 copy 的正确性语义 [S028]。
+指定从 DRAM 填充到 L2 时建议采用的 fetch granularity：none、64 B、128 B 或 256 B。它是缓存填充策略字段，不改变 tensor 的逻辑 shape、坐标或 copy 的正确性语义 [S028]。
 
 #### `oobFill`
 
