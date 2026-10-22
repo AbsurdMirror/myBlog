@@ -46,7 +46,7 @@
 </tr>
 <tr class="odd">
 <td>TMA unit / engine</td>
-<td>官方架构资料所称的异步拷贝硬件单元；内部结构留到第四章分析</td>
+<td>官方架构资料所称的异步拷贝硬件单元；内部结构留待后续硬件实现分析</td>
 </tr>
 </tbody>
 </table>
@@ -98,7 +98,7 @@
 </tr>
 </tbody>
 </table>
-<p>第一章可以确定产品扩展和功能阶段。硬件实现代际需要第三章的 SASS 证据与第四章的硬件、专利和性能证据共同确认。</p>
+<p>第一章可以确定产品扩展和功能阶段。硬件实现代际仍需结合后续的 SASS、硬件资料、专利和性能实验共同确认。</p>
 <h2 id="tma-的技术前身与引入动机">1.2 TMA 的技术前身与引入动机</h2>
 <h3 id="传统-global-to-shared-搬运">1.2.1 传统 global-to-shared 搬运</h3>
 <p>GPU kernel 常把 global memory 中的数据 tile 搬入 shared memory，再由线程块内的计算线程重复使用。传统路径由线程完成以下工作：</p>
@@ -284,7 +284,7 @@
 <li><code>sm_100f</code>、<code>sm_103f</code>、<code>sm_120f</code> 等 <code>f</code> target 表示同一 family 共享的特性集合；</li>
 <li>同一产品品牌下的不同 Compute Capability 可以具有不同的 tensor mode、数据类型、swizzle 或其他限制。</li>
 </ul>
-<p>以 multicast 为例，CUDA Programming Guide 建议在 <code>sm_90a</code> 上使用其优化路径；PTX 的其他 TMA 扩展也分别规定最低 target 或 <code>a/f</code> target [S001][S018]。第二章将按指令变体记录这些限制。</p>
+<p>以 multicast 为例，CUDA Programming Guide 建议在 <code>sm_90a</code> 上使用其优化路径；PTX 的其他 TMA 扩展也分别规定最低 target 或 <code>a/f</code> target [S001][S018]。<a href="02-hopper-ptx.html">第二章</a>记录 Hopper 变体的 target 限制，<a href="03-blackwell-rubin-ptx.html">第三章</a>继续整理 Blackwell 与 Rubin 的 target 分化。</p>
 <h2 id="hopper首代-tma-的能力基线">1.4 Hopper：首代 TMA 的能力基线</h2>
 <h3 id="基本执行模型">1.4.1 基本执行模型</h3>
 <p><img src="assets/01-tma-execution-model.svg" alt="TMA 基本执行模型：Tensor Map 创建、线程提交、异步执行与两类完成路径" /></p>
@@ -331,7 +331,7 @@
 <tbody>
 <tr class="odd">
 <td>单条操作的描述粒度</td>
-<td>每线程 4/8/16B</td>
+<td>每线程 4/8/16 B</td>
 <td>单线程可描述大块或整个 tile</td>
 </tr>
 <tr class="even">
@@ -387,7 +387,7 @@
 <h3 id="blackwell-各-target-的能力分化">1.5.3 Blackwell 各 target 的能力分化</h3>
 <p><img src="assets/06-blackwell-targets.svg" alt="Blackwell 产品分支、Compute Capability、PTX target 与 a/f target 的能力分化" /></p>
 <p>Blackwell 数据中心和 workstation/consumer 产品分布在 CC 10.0、10.3、12.0 与 12.1；同期产品表还列出 CC 11.0 的 Jetson 分支。PTX 对 <code>sm_100/103</code>、<code>sm_110</code> 与 <code>sm_120/121</code> 的指令变体和限制分别定义；<code>a</code> target 和 <code>f</code> target 又提供不同的特性集合 [S011][S018][S023]。</p>
-<p>因此，后续独立文章将把 Blackwell 数据中心、Jetson、workstation/consumer 和 GB10 分支分别映射到具体 target。本文的“Blackwell 功能阶段”表示这一时期出现了确定的 TMA 接口增量，不表示所有相关产品拥有完全相同的 TMA 指令集合 [S018][S023]。</p>
+<p>因此，<a href="03-blackwell-rubin-ptx.html">第三章</a>将 Blackwell 数据中心、Jetson、workstation/consumer 和 GB10 分支分别映射到具体 target。本文的“Blackwell 功能阶段”表示这一时期出现了确定的 TMA 接口增量，不表示所有相关产品拥有完全相同的 TMA 指令集合 [S018][S023]。</p>
 <h3 id="blackwell-ultra产品与-target-扩展">1.5.4 Blackwell Ultra：产品与 target 扩展</h3>
 <p><img src="assets/07-blackwell-ultra.svg" alt="Blackwell Ultra 的已知产品映射、证据边界和后续验证路径" /></p>
 <p>B300/GB300 是 Blackwell Ultra 产品节点，官方产品表将其映射为 CC 10.3 [S011][S017]。截至本章调研截止日期，公开产品资料没有单独列出 B300/GB300 专属的 TMA 功能。本文先把它归入 Blackwell 功能阶段中的产品与 target 扩展；其实现差异和性能差异需要由 PTX target、SASS 与实测进一步识别。</p>
@@ -502,11 +502,11 @@
 <ul>
 <li><code>cp.async.bulk</code>、<code>cp.reduce.async.bulk</code> 与 bulk prefetch；</li>
 <li><code>cp.async.bulk.tensor</code>、<code>cp.reduce.async.bulk.tensor</code> 与 tensor prefetch；</li>
-<li>tensor map 创建、字段、<code>tensormap.replace</code> 与 instruction-time override；</li>
+<li>tensor map 创建、字段与 <code>tensormap.replace</code>；</li>
 <li>mbarrier、bulk async-group、async proxy 与 proxy fence；</li>
 <li>PTX 8.0 首发能力、PTX 8.3 的 descriptor 更新能力及 Hopper target requirements。</li>
 </ul>
-<p>Blackwell 的 PTX 8.6–8.8 增量与 Rubin 的 PTX 9.4 descriptor override 将作为后续独立文章展开，不在第二章中预告为已经覆盖。再后续的文章会把 PTX 变体映射到 SASS，并结合官方硬件资料、专利和性能实验判断 TMA 的内部实现与硬件代际。</p>
+<p><a href="03-blackwell-rubin-ptx.html">第三章</a>进一步展开 Blackwell 的 PTX 8.6–8.8 增量与 Rubin 的 PTX 9.4 descriptor override。再后续的文章会把 PTX 变体映射到 SASS，并结合官方硬件资料、专利和性能实验判断 TMA 的内部实现与硬件代际。</p>
 <h2 id="关键结论的证据等级">1.9 关键结论的证据等级</h2>
 <table>
 <colgroup>
@@ -561,4 +561,4 @@
 </table>
 <hr />
 <p><a href="index.html">返回系列目录</a> · <a href="02-hopper-ptx.html">继续阅读第二章：Hopper 第一代 TMA 的 PTX 设计</a> · <a href="references.html">参考资料索引</a></p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-20<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/01-overview.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-22<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/01-overview.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
