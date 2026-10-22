@@ -8,7 +8,6 @@ updated: 2026-10-20
 
 > 本文是 [NVIDIA TMA 调研系列](index.md) 第二章，聚焦 Hopper/PTX 8.0–8.3。上一篇：[NVIDIA 产品迭代与 TMA 概述](01-overview.md)；引用编号见[参考资料索引](references.md)。Blackwell PTX 8.6–8.8 与 Rubin PTX 9.4 的演进将由后续独立文章展开。
 
-> 状态：Hopper 成稿，已完成结构、事实与格式复核（2026-10-13）  
 > 范围：Hopper / Compute Capability 9.0；以 PTX ISA 8.0 首发接口为基线，补充 PTX 8.3 的 Hopper descriptor 修改与 proxy 指令  
 > 资料回指：[参考资料索引](references.md)
 

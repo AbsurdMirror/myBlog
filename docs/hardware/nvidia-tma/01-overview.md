@@ -6,7 +6,6 @@ updated: 2026-10-20
 
 # 第一章：NVIDIA 产品迭代与 TMA 概述
 
-> 状态：第一章初版（2026-10-12 重新调研并自审通过）  
 > 调研截止：2026-10-12  
 > 本文是 [NVIDIA TMA 调研系列](index.md) 第一章；引用编号见[参考资料索引](references.md)。下一篇：[Hopper 第一代 TMA 的 PTX 设计](02-hopper-ptx.md)。
 

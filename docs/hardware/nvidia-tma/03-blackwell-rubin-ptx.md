@@ -8,7 +8,6 @@ updated: 2026-10-21
 
 > 本文是 [NVIDIA TMA 调研系列](index.md) 第三章。上一篇：[Hopper 第一代 TMA 的 PTX 设计](02-hopper-ptx.md)；引用编号见[参考资料索引](references.md)。
 
-> 状态：成稿，已按第二章结构重新组织并完成版本、target、语法与约束复核（2026-10-21）  
 > 范围：PTX ISA 8.6–9.4；以第二章的 Hopper/PTX 8.0–8.3 接口为基线，只整理新增和发生变化的部分  
 > 资料回指：[参考资料索引](references.md)
 
@@ -851,17 +850,6 @@ applypriority.async.bulk.tensor.3d.global.bulk_group.tile.L2::evict_normal
 从 PTX 接口看，Blackwell 的重点是扩大一次 TMA operation 能表达的数据选择与 CTA 协作方式：本地 destination、byte mask、四行 gather/scatter、W-only im2col 和 CTA-pair 通知。PTX 9.4 的重点是降低 descriptor 重用和运行期适配成本，并在 copy path 上附加数据有效性报告与 cache 生命周期控制。
 
 以上结论只说明 PTX 对软件暴露的架构契约。`.shared::cta` 是否对应独立快速路径、gather4/scatter4 如何生成硬件请求、override 是否绕过 descriptor decode、report 与 cache-priority 操作由哪些硬件模块执行，仍需由后续 SASS 和硬件章节验证。
-
-## 第三章复核记录
-
-- 2026-10-20：按 PTX ISA 8.7 历史归档复核 PTX 8.6 新增 qualifier、operand、target 和 gather/scatter/im2col/CTA-group 约束。
-- 2026-10-20：按 PTX ISA 8.8 与 9.0 复核 `a`/`f` target 分化、`96 B` swizzle 和 `sm_101*`→`sm_110*` 重命名，未把 target 改名统计为功能新增。
-- 2026-10-20：按 PTX ISA 9.2/9.3 复核 `.ignore_oob` 与 `.weak/.relaxed.scope.b128`，并将其与 tensor descriptor OOB fill、完成机制分开。
-- 2026-10-20：按 PTX ISA 9.4 逐项复核 property override 的 operand packing、组合限制、32-bit multicast、report mechanism 和 cache priority 指令。
-- 2026-10-20：交叉检查 Rubin 官方博客；保留 `sm_107f` 与具体 Rubin 产品 CC 映射的证据边界，不以功能描述替代正式产品表。
-- 2026-10-21：按第二章“描述符—字段—指令全集—逐指令”的结构重新组织；将 descriptor override 与 `tensormap.replace` 变化归入指令部分。
-- 2026-10-21：将原 3.2.1/3.2.2 合并为完整的 3.2.1：Tiled、Im2col 各自在本节解释 `swizzle`，W-only Im2col 在本节逐项解释其新增或变化字段；后续指令章节编号前移。
-- 2026-10-21：按 3.2 与第二章的对象层级重写 3.3，将 descriptor 字段取值、`tensormap.replace` 操作数扩展和 target 演进分开，并补全 packed sub-byte 与 `96 B` swizzle 的组合约束。
 
 ---
 
