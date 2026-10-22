@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "19fd122a660a5e1fc103980547fca78d7efd9b38",
-  "built_utc": "2026-10-21T15:26:06.920613+00:00",
+  "source_commit": "3db23359bffc8b4da8f448239a797c5f629a74ae",
+  "built_utc": "2026-10-22T02:54:43.933161+00:00",
   "pages": [
     "index.html",
     "hardware/nvidia-tma/index.html",
@@ -178,20 +178,20 @@
       "bytes": 5502
     },
     "hardware/nvidia-tma/01-overview.html": {
-      "sha256": "5a4a18a5c5f0c4e1e17958169e6ca905395c6e7e19be85d700cd54ca63e31623",
-      "bytes": 35257
+      "sha256": "5dc25c47fa8c8a356db5a9bddf6fc63ed4b845b94c25354b9c0f7a166886cf00",
+      "bytes": 35182
     },
     "hardware/nvidia-tma/references.html": {
       "sha256": "429bbf4bc123ad09bd6a5f75fecdf82c58161a048597fe7185fcaaeae46967f0",
       "bytes": 10026
     },
     "hardware/nvidia-tma/03-blackwell-rubin-ptx.html": {
-      "sha256": "c421b82b95e8d8c195aafbdd890872e31bf059ff26e261b4137e7dd24e8c534e",
-      "bytes": 87543
+      "sha256": "fd2ae4e361d3708358eab472c22ea605e3497ae09c547732b91b6e562311258a",
+      "bytes": 85777
     },
     "hardware/nvidia-tma/02-hopper-ptx.html": {
-      "sha256": "852d5ef1de17f91d826202de91e63bfd448eff4bd88fbbeac0a1bec1c6d2999d",
-      "bytes": 55954
+      "sha256": "7385d2443f36345936c01f34f45b8e70746d79865a16861ac2d18b2916f0f95f",
+      "bytes": 55867
     },
     "hardware/nvidia-tma/assets/08-rubin-descriptor-override.svg": {
       "sha256": "562aa45e948d2a2353058f2f3d9845a1026bbb7841b2532cab00a21473beecbc",

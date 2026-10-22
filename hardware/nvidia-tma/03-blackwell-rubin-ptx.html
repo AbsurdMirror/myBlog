@@ -7,8 +7,7 @@
 <p>本文是 <a href="index.html">NVIDIA TMA 调研系列</a> 第三章。上一篇：<a href="02-hopper-ptx.html">Hopper 第一代 TMA 的 PTX 设计</a>；引用编号见<a href="references.html">参考资料索引</a>。</p>
 </blockquote>
 <blockquote>
-<p>状态：成稿，已按第二章结构重新组织并完成版本、target、语法与约束复核（2026-10-21）<br />
-范围：PTX ISA 8.6–9.4；以第二章的 Hopper/PTX 8.0–8.3 接口为基线，只整理新增和发生变化的部分<br />
+<p>范围：PTX ISA 8.6–9.4；以第二章的 Hopper/PTX 8.0–8.3 接口为基线，只整理新增和发生变化的部分<br />
 资料回指：<a href="references.html">参考资料索引</a></p>
 </blockquote>
 <p>第二章先给出 Hopper 的完整 TMA 描述符，再给出 TMA 相关 PTX 指令全集，并逐字段、逐指令解释。本章沿用相同的观察顺序，但只记录相对 Hopper 基线发生的变化：每个版本段先说明描述符对象和字段是否变化，再列出指令变化总表，最后逐条解释变化的指令、修饰符和操作数。未发生变化的字段和指令不重复展开。</p>
@@ -1969,17 +1968,6 @@ cp.async.bulk.tensor.4d.global.shared::cta.im2col_no_offs::w.bulk_group
 </table>
 <p>从 PTX 接口看，Blackwell 的重点是扩大一次 TMA operation 能表达的数据选择与 CTA 协作方式：本地 destination、byte mask、四行 gather/scatter、W-only im2col 和 CTA-pair 通知。PTX 9.4 的重点是降低 descriptor 重用和运行期适配成本，并在 copy path 上附加数据有效性报告与 cache 生命周期控制。</p>
 <p>以上结论只说明 PTX 对软件暴露的架构契约。<code>.shared::cta</code> 是否对应独立快速路径、gather4/scatter4 如何生成硬件请求、override 是否绕过 descriptor decode、report 与 cache-priority 操作由哪些硬件模块执行，仍需由后续 SASS 和硬件章节验证。</p>
-<h2 id="第三章复核记录">第三章复核记录</h2>
-<ul>
-<li>2026-10-20：按 PTX ISA 8.7 历史归档复核 PTX 8.6 新增 qualifier、operand、target 和 gather/scatter/im2col/CTA-group 约束。</li>
-<li>2026-10-20：按 PTX ISA 8.8 与 9.0 复核 <code>a</code>/<code>f</code> target 分化、<code>96 B</code> swizzle 和 <code>sm_101*</code>→<code>sm_110*</code> 重命名，未把 target 改名统计为功能新增。</li>
-<li>2026-10-20：按 PTX ISA 9.2/9.3 复核 <code>.ignore_oob</code> 与 <code>.weak/.relaxed.scope.b128</code>，并将其与 tensor descriptor OOB fill、完成机制分开。</li>
-<li>2026-10-20：按 PTX ISA 9.4 逐项复核 property override 的 operand packing、组合限制、32-bit multicast、report mechanism 和 cache priority 指令。</li>
-<li>2026-10-20：交叉检查 Rubin 官方博客；保留 <code>sm_107f</code> 与具体 Rubin 产品 CC 映射的证据边界，不以功能描述替代正式产品表。</li>
-<li>2026-10-21：按第二章“描述符—字段—指令全集—逐指令”的结构重新组织；将 descriptor override 与 <code>tensormap.replace</code> 变化归入指令部分。</li>
-<li>2026-10-21：将原 3.2.1/3.2.2 合并为完整的 3.2.1：Tiled、Im2col 各自在本节解释 <code>swizzle</code>，W-only Im2col 在本节逐项解释其新增或变化字段；后续指令章节编号前移。</li>
-<li>2026-10-21：按 3.2 与第二章的对象层级重写 3.3，将 descriptor 字段取值、<code>tensormap.replace</code> 操作数扩展和 target 演进分开，并补全 packed sub-byte 与 <code>96 B</code> swizzle 的组合约束。</li>
-</ul>
 <hr />
 <p><a href="index.html">返回系列目录</a> · <a href="02-hopper-ptx.html">上一篇：Hopper 第一代 TMA 的 PTX 设计</a> · <a href="references.html">参考资料索引</a></p>
 </article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-21<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/03-blackwell-rubin-ptx.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
