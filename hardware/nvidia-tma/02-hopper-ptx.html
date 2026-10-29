@@ -151,7 +151,7 @@ typedef struct CUtensorMap_st {
 </tbody>
 </table>
 <p>在前向卷积中，可以把每个输出位置对应的 <code>R × S × Cin</code> 输入窗口展平为一行。全部 <code>N × P × Q</code> 个输出位置组成激活矩阵 <code>A[N×P×Q, R×S×Cin]</code>；卷积权重组成矩阵 <code>B[R×S×Cin, Cout]</code>。二者相乘得到 <code>C[N×P×Q, Cout]</code>，其每一行已经对应一个输出位置，只需逻辑上恢复为 <code>Output[N, P, Q, Cout]</code>，或由 GEMM epilogue 直接按该布局写回，不需要 col2im。下图采用常见的 <code>A[M,K] × B[K,Cout]</code> 表达；实际 shared-memory 排列可以转置或 swizzle。</p>
-<p><img src="assets/09-im2col-to-gemm.svg" alt="前向卷积通过 Im2col 转换为矩阵乘法，并将 GEMM 结果恢复为输出张量" /></p>
+<p><img src="assets/09-im2col-to-gemm.svg?v=4477862e5692" alt="前向卷积通过 Im2col 转换为矩阵乘法，并将 GEMM 结果恢复为输出张量" /></p>
 <h3 id="字段逐项解释">2.1.2 字段逐项解释</h3>
 <h4 id="tensordatatype"><code>tensorDataType</code></h4>
 <p>描述 global tensor 元素如何解释，也决定 TMA load、store 和 reduce 的元素语义。Hopper/CUDA 12.0 的枚举为：</p>
@@ -244,7 +244,7 @@ typedef struct CUtensorMap_st {
 <p>一次 TMA tiled 操作在第 <code>i</code> 维覆盖的 bounding-box 范围，单位是<strong>元素</strong>，每维为 1–256。它不是 global tensor 的 shape，也不是 shared-memory byte stride。无 interleave 时，<code>boxDim[0] × elementSize</code> 必须是 16 B 的倍数 [S027][S028]。</p>
 <h4 id="elementstridesi"><code>elementStrides[i]</code></h4>
 <p>bounding box 在第 <code>i</code> 维遍历 global tensor 时的元素步长，单位是<strong>元素</strong>，范围为 1–8。值为 1 表示逐元素遍历；值大于 1 表示跳跃访问。实际访问元素数为 <code>ceil(boxDim[i] / elementStrides[i])</code>。无 interleave 时，TMA 不支持维度 0 的 stride，因此 <code>elementStrides[0]</code> 被忽略 [S027][S028]。</p>
-<p><img src="assets/10-tiled-descriptor-geometry.svg" alt="Tiled descriptor 的几何字段：globalDim、globalStrides、boxDim 与 elementStrides 的关系" /></p>
+<p><img src="assets/10-tiled-descriptor-geometry.svg?v=03ffdc2b3686" alt="Tiled descriptor 的几何字段：globalDim、globalStrides、boxDim 与 elementStrides 的关系" /></p>
 <h4 id="interleave"><code>interleave</code></h4>
 <p>说明 global-memory tensor 的物理 channel interleave 布局。Hopper 支持 none、16 B 和 32 B。interleave 不是 shared-memory swizzle：前者解释 global 侧的交错存储，后者决定数据到达 shared memory 后的排布。启用 interleave 时 rank 至少为 3；32 B interleave 还提高 global address 和 global stride 的对齐要求 [S027][S028]。</p>
 <h4 id="swizzle"><code>swizzle</code></h4>
@@ -253,12 +253,12 @@ typedef struct CUtensorMap_st {
 <p>指定从 DRAM 填充到 L2 时建议采用的 fetch granularity：none、64 B、128 B 或 256 B。它是缓存填充策略字段，不改变 tensor 的逻辑 shape、坐标或 copy 的正确性语义 [S028]。</p>
 <h4 id="oobfill"><code>oobFill</code></h4>
 <p>指定 bounding box 越过 global tensor 边界时生成的目标值。Hopper 支持 zero fill 和特殊 OOB-NaN fill；后者仅适用于浮点数据类型。该字段使边缘 tile 的越界元素可以由 TMA 生成，不要求指令为每个元素携带 predicate [S027][S028]。</p>
-<p><img src="assets/11-layout-policy-fields.svg" alt="TMA 描述符中 interleave、L2 promotion、OOB fill 与 swizzle 在数据路径上的作用位置" /></p>
+<p><img src="assets/11-layout-policy-fields.svg?v=8c5b37cb884b" alt="TMA 描述符中 interleave、L2 promotion、OOB fill 与 swizzle 在数据路径上的作用位置" /></p>
 <h4 id="im2col-专属字段">Im2col 专属字段</h4>
 <p><code>pixelBoxLowerCorner[]</code> 与 <code>pixelBoxUpperCorner[]</code> 分别给出 DHW 各维 filter box 的下角和上角相对 offset。rank 为 3、4、5 时分别有 1、2、3 个分量；随着分量数增加，每项可用的有符号取值宽度依次为 16、8、4 bit。</p>
 <p><code>channelsPerPixel</code> 表示每个 pixel 沿 C 维访问的元素数，CUDA 12.0 给出的上限为 256；<code>pixelsPerColumn</code> 表示一个 column 沿 NDHW 维访问的元素总数，上限为 1024。corner 字段只规定 DHW 空间中的坐标边界，不直接规定访问元素数。该版文档没有为这两个字段另列非零下限 [S027][S028]。</p>
 <p>Im2col descriptor 只支持 3D、4D 和 5D，分别解释为 NWC、NHWC 和 NDHWC [S027]。</p>
-<p><img src="assets/12-im2col-fields.svg" alt="Im2col descriptor 的专属字段：pixel box、channelsPerPixel 与 pixelsPerColumn" /></p>
+<p><img src="assets/12-im2col-fields.svg?v=95478b8874bb" alt="Im2col descriptor 的专属字段：pixel box、channelsPerPixel 与 pixelsPerColumn" /></p>
 <h2 id="tma-相关-ptx-指令">2.2 TMA 相关 PTX 指令</h2>
 <h3 id="指令全集">2.2.1 指令全集</h3>
 <p>PTX 8.0 为 <code>sm_90</code> 建立了两条相邻但不同的路径：不使用 tensor map 的一维 bulk path，以及使用 tensor map 的 tensor path。为了完整呈现 Hopper TMA 的 PTX 设计，下表同时列出二者 [S027]。</p>
@@ -483,7 +483,7 @@ cp.async.bulk.global.shared::cta.bulk_group{.L2::cache_hint}
 <h4 id="dst-与-.src"><code>.dst</code> 与 <code>.src</code></h4>
 <p>指令名中的 <code>.dst.src</code> 按“目标在前、源在后”排列，数据实际从 <code>.src</code> 搬到 <code>.dst</code>。</p>
 <p><code>.shared::cta</code> 表示执行当前指令的 CTA 自己的 shared-memory 地址窗口。<code>.shared::cluster</code> 表示当前 CTA cluster 内任意 CTA 的 shared-memory 地址窗口，可以指向本 CTA，也可以指向另一个 CTA。它不是一块独立的 cluster 级物理存储；底层仍是各 CTA 所在 SM 的 shared memory，只是增加了 cluster 范围的寻址方式 [S027][S032]。</p>
-<p><img src="assets/15-ptx-memory-hierarchy.png" alt="PTX memory hierarchy：每个 CTA 的 shared memory 与 cluster 范围的可见性" /></p>
+<p><img src="assets/15-ptx-memory-hierarchy.png?v=e9232bc39a7b" alt="PTX memory hierarchy：每个 CTA 的 shared memory 与 cluster 范围的可见性" /></p>
 <p><em>图源：NVIDIA PTX ISA，Memory Hierarchy [S032]。</em></p>
 <p><code>.dst</code> 和 <code>.src</code> 的表中取值不能任意组合。Hopper PTX 8.0 支持以下三种方向：</p>
 <table>
@@ -520,13 +520,13 @@ cp.async.bulk.global.shared::cta.bulk_group{.L2::cache_hint}
 <p><code>.multicast::cluster</code> 只适用于 <code>.shared::cluster.global</code> 方向。普通形式由 <code>dstMem</code> 指定一个 shared-memory 目标；加入 multicast 后，<code>ctaMask</code> 选择 cluster 内的多个目标 CTA，global source data 会写入这些 CTA 各自 shared memory 中与 <code>dstMem</code> 相同的 CTA-relative offset。对应的完成通知也发送到各目标 CTA 中与 <code>mbar</code> 相同的相对位置。</p>
 <p><code>ctaMask</code> 是 16-bit 位掩码，第 <code>i</code> 位对应 <code>%cluster_ctarank == i</code> 的 CTA；置 1 表示该 CTA 是本次 multicast 的目标。掩码宽度提供可表示的 CTA rank 范围，本身不定义当前 cluster 实际包含多少个 CTA [S027]。</p>
 <p>下图将三种合法的 <code>.dst.src</code> 组合展开为四种数据路径，并补充一个不受支持的反向 shared-memory 路径。每个场景上方保留实际 PTX 形式，其中紧跟 <code>cp.async.bulk</code> 的两个 state-space modifier 依次是 <code>.dst</code> 和 <code>.src</code>。</p>
-<p><img src="assets/17-tma-copy-directions.png" alt="TMA 支持的数据搬运方向、multicast 路径及对应 PTX 形式" /></p>
+<p><img src="assets/17-tma-copy-directions.png?v=94a23c5caca2" alt="TMA 支持的数据搬运方向、multicast 路径及对应 PTX 形式" /></p>
 <p>图中的④与⑤需要成对理解：Hopper 支持当前 CTA 的 <code>.shared::cta</code> 作为 source，把数据写入同一 cluster 中另一个 CTA 的 <code>.shared::cluster</code>；不支持把远端 <code>.shared::cluster</code> 作为 source，再由 TMA 拉回当前 CTA 的 <code>.shared::cta</code>。因此 shared→shared 不是方向对称的能力。</p>
 <p><code>srcMem</code>、<code>dstMem</code> 必须 16 B 对齐，访问区间不得越出相应 state space。该指令不使用 tensor map，不包含多维 shape、stride、swizzle 或 OOB 处理 [S027]。</p>
 <h4 id="bulk-async-group">Bulk async-group</h4>
 <p><code>.bulk_group</code> 表示该异步操作采用 <strong>bulk async-group</strong> 管理完成状态。它不是一个由程序显式创建或命名的共享对象，而是当前线程按指令顺序维护的分组机制：线程先发出若干采用 <code>.bulk_group</code> completion 的 bulk async 操作，再执行 <code>cp.async.bulk.commit_group</code>，把这些尚未提交的操作封装成一个新 group [S027]。</p>
 <p>下图左侧给出一个线程的指令流。①、②先发出两次 copy，③再把它们提交为 G0；④由⑤提交为 G1；⑥、⑦由⑧提交为 G2；⑨由⑩提交为 G3。也就是说，<code>commit_group</code> 是一组操作的结束边界，不是该组中的第一条 copy。图中的 G0–G3 只是为了说明提交先后而使用的名称，PTX 指令不会返回可供程序引用的 group ID。</p>
-<p><img src="assets/14-bulk-async-group.png" alt="一个线程将 bulk async 操作依次提交为多个 group，并以 wait_group N 等待较早的 group" /></p>
+<p><img src="assets/14-bulk-async-group.png?v=69618f1caa27" alt="一个线程将 bulk async 操作依次提交为多个 group，并以 wait_group N 等待较早的 group" /></p>
 <p>右下部分表示：假设 G0–G3 已按顺序提交，<code>cp.async.bulk.wait_group N</code> 允许最新的 <code>N</code> 个 group 仍未完成，但要求更早的 group 全部完成。因此，<code>wait_group 0</code> 等待四组全部完成；<code>wait_group 1</code> 只允许最新的 G3 尚未完成；<code>wait_group 2</code> 允许 G2、G3 尚未完成，依此类推。图中的“允许继续”仅表示这些组不在本次等待的强制完成范围内，并不表示它们一定仍在执行 [S027]。</p>
 <p>分组和等待均以执行指令的线程为作用域：一个线程的 <code>commit_group</code> 只提交该线程此前尚未提交的 bulk async 操作，后续也由同一线程用 <code>wait_group</code> 约束这些 group。组内操作被共同纳入完成判断，但组内彼此不因此获得额外的 memory ordering；<code>.read</code> 形式的较弱等待语义见 2.2.10。</p>
 <h3 id="cp.reduce.async.bulk">2.2.4 <code>cp.reduce.async.bulk</code></h3>
@@ -1073,7 +1073,7 @@ fence.proxy.tensormap::generic.acquire.scope [addr], 128;
 
 .scope = { .cta, .cluster, .gpu, .sys }</code></pre>
 <p>下图分别展开两种完整的 descriptor 更新方式。方式 A 直接修改 global descriptor，随后执行 proxy release；方式 B 先在 CTA shared memory 中修改 descriptor，再由 <code>tensormap.cp_fenceproxy</code> 将完整的 128 B descriptor 复制到 global memory，并同时执行 proxy release。每个场景左侧是 PTX 指令流，右侧编号相同的标记表示该指令在内存层级中的作用位置。消费端在发起 TMA 前执行 address-scoped acquire，之后 TMA 才通过 tensormap proxy 读取该 global descriptor。</p>
-<p><img src="assets/13-descriptor-update-paths.png" alt="直接修改 global descriptor 与先在 shared memory 修改再复制的两种更新路径" /></p>
+<p><img src="assets/13-descriptor-update-paths.png?v=b6d35991df9c" alt="直接修改 global descriptor 与先在 shared memory 修改再复制的两种更新路径" /></p>
 <p>图中的 <code>Thread</code> 表示执行这些指令的线程角色，不表示 PTX 强制要求独立的生产者线程和消费者线程。同一线程可以按 <code>replace → release → acquire → TMA</code> 的顺序完成整个过程，此时 program order 已保证 release 先于 acquire。若 descriptor 由一个线程生产、由另一个线程消费，则还必须通过 barrier、原子通信或 kernel/stream 顺序等已有同步关系，保证生产者的 release 发生在消费者的 acquire 之前；proxy fence 负责跨 proxy 的顺序和可见性，本身不会等待未来才发生的 release。执行同步也不能替代消费端的 tensormap-proxy acquire [S031]。</p>
 <p>方式 B 还包含一项执行主体约束：<code>tensormap.replace...shared::cta</code> 可以由单个线程完成，但 <code>tensormap.cp_fenceproxy...sync.aligned</code> 必须由 warp 内所有线程一致执行；只有一个 lane 到达该指令时，行为未定义 [S031]。</p>
 <p>两条 descriptor 更新路径的区别如下：</p>

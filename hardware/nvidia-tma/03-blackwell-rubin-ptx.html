@@ -13,7 +13,7 @@
 <p>第二章先给出 Hopper 的完整 TMA 描述符，再给出 TMA 相关 PTX 指令全集，并逐字段、逐指令解释。本章沿用相同的观察顺序，但只记录相对 Hopper 基线发生的变化：每个版本段先说明描述符对象和字段是否变化，再列出指令变化总表，最后逐条解释变化的指令、修饰符和操作数。未发生变化的字段和指令不重复展开。</p>
 <h2 id="版本与-target-坐标">3.1 版本与 target 坐标</h2>
 <p>PTX 版本表示一种语法或语义从何时进入 PTX ISA；一条指令能否在某个 GPU target 上使用，还要继续检查该指令的 Target ISA Notes。尤其从 PTX 8.8 开始，<code>f</code> target 表示 <strong>family-specific</strong> 能力：例如 <code>sm_100f</code> 上可用的特性可以向同一 family 的更高 target 兼容，但不能据此推广到另一 family [S035]。</p>
-<p><img src="assets/18-ptx-version-evolution.svg" alt="PTX 8.6 至 9.4 的 TMA 相关变化与 target 线索" /></p>
+<p><img src="assets/18-ptx-version-evolution.svg?v=e267b9cfc3e5" alt="PTX 8.6 至 9.4 的 TMA 相关变化与 target 线索" /></p>
 <table>
 <colgroup>
 <col style="width: 25%" />
@@ -600,7 +600,7 @@ cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group
 
 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group
     [tensorMap, {col_idx, row_idx0, row_idx1, row_idx2, row_idx3}], [srcMem];</code></pre>
-<p><img src="assets/19-gather4-scatter4.svg" alt="gather4 与 scatter4 在连续 shared tile 和四个 global rows 之间的映射" /></p>
+<p><img src="assets/19-gather4-scatter4.svg?v=ab230794143d" alt="gather4 与 scatter4 在连续 shared tile 和四个 global rows 之间的映射" /></p>
 <p>这两个 mode 将 <code>tensorCoords</code> 从普通的 <code>.s32[dim]</code> 改为固定五个 <code>.s32</code> 坐标：</p>
 <pre class="text"><code>{col_idx, row_idx0, row_idx1, row_idx2, row_idx3}</code></pre>
 <p>它们表示四个起点 <code>(col_idx, row_idxN)</code>，即四行共享同一个 column 坐标，row 坐标分别给出。四个起点在 tensor space 中形成四个 bounding box；每个 box 的 dimension 0 size 表示 row length，dimension 1 size 必须为 1。四行之间可以不连续，但每行内部仍按 tiled mode 连续访问。除上述坐标形式外，其余 tiled-mode 规则继续生效；interleave layout 不受支持 [S034]。</p>
@@ -1632,7 +1632,7 @@ cp.async.bulk.tensor.4d.global.shared::cta.im2col_no_offs::w.bulk_group
 </tr>
 </tbody>
 </table>
-<p><img src="assets/20-descriptor-override.svg" alt="PTX 9.4 使用显式操作数覆盖 descriptor 中的地址、dimension 与 stride" /></p>
+<p><img src="assets/20-descriptor-override.svg?v=254a60147e4d" alt="PTX 9.4 使用显式操作数覆盖 descriptor 中的地址、dimension 与 stride" /></p>
 <p>对 2D–5D，每个 stride 由低 32 bit 与打包在 <code>.b16</code> 中的 4-bit 高位恢复：</p>
 <pre class="text"><code>globalStride[i] =
     ((lowerStride[i] + (upperStride[i] &lt;&lt; 32)) &lt;&lt; 4)</code></pre>
@@ -1888,7 +1888,7 @@ cp.async.bulk.tensor.4d.global.shared::cta.im2col_no_offs::w.bulk_group
 <p>以上 PTX 9.4 扩展均要求 <code>sm_107f</code> 或同一 family 中的后续 target。这里的 target 条件描述 PTX 接口可用性，不等价于所有设备都支持相同的 cluster shape 或 cache 行为。</p>
 <h2 id="代际变化总结">3.6 代际变化总结</h2>
 <p>下图将 TMA 的代际变化放在同一组坐标中：横轴按 NVIDIA 架构与 PTX ISA 版本推进，纵轴依次观察描述符与动态寻址、数据选择与形状变换、搬运方向与存储空间、CTA 与 Cluster 协作，以及搬运控制与附加语义。圆点表示能力首次出现，菱形表示对既有能力的扩展，横线表示该能力在后续版本中继续存在。</p>
-<p><img src="assets/21-tma-evolution-map.svg" alt="TMA 能力的 PTX 与架构演进" /></p>
+<p><img src="assets/21-tma-evolution-map.svg?v=0451d9680d82" alt="TMA 能力的 PTX 与架构演进" /></p>
 <p>从纵向看，Hopper 建立了 descriptor 驱动的异步搬运、基础 tile/Im2col、multicast、mbarrier 和 cache-policy 等能力；Blackwell 主要扩展一次 operation 的数据选择、shared destination 和 CTA 协作方式；PTX 9.2–9.3 补充边界与内存语义；PTX 9.4 则进一步加入指令级 property override、32-bit multicast mask、有效性报告和 cache priority 操作。下表对图中的变化作精确展开。</p>
 <table>
 <colgroup>

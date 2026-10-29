@@ -11,7 +11,7 @@
 <p>从软件可见的硬件资源看，Hopper 为每个 SM 提供了一个独立的 TMA 服务端点，而不是由整个 GPU 共用一个全局 TMA 引擎。每个 SM 都可以独立发起 TMA 请求，并获得相对固定的数据搬运能力。</p>
 <p>NVIDIA 的官方资料采用了相同的组织方式。H100 白皮书在单个 SM 的功能框内画出 TMA，并将它连接到该 SM 的 shared memory 与全局内存数据通路；<a href="https://research.nvidia.com/publication/2025-06_task-based-tensor-computations-modern-gpus">NVIDIA Research</a> 则将 TMA描述为 Hopper 每个 compute unit 所包含的异步数据移动单元。这里的 compute unit 对应 SM，因此可以确定 TMA 在体系结构上是按 SM 提供服务的。</p>
 <p>至于一个服务端点是否对应一个完整的物理 TMAU，<a href="https://patents.google.com/patent/US12499052B2/en">NVIDIA TMAU 专利</a> 给出了更宽的实现范围：TMAU 可以位于 SM 内，也可以位于 SM 外但与 SM 紧密耦合；多个 SM 可以分别连接各自的 TMAU，也可以通过仲裁共享部分 TMA 硬件。因此，“每个 SM 有一个 TMA 服务端点”并不必然等价于“每个 SM 内复制了一套完整 TMAU”。</p>
-<p><img src="assets/hardware/US20230289292A1_FIG1_system_context_en.png" alt="TMAU 在 GPU 中的系统位置" /></p>
+<p><img src="assets/hardware/US20230289292A1_FIG1_system_context_en.png?v=2cd7ce0743ff" alt="TMAU 在 GPU 中的系统位置" /></p>
 <p><em>图 4-1　专利 FIG. 1 给出的 SM、shared memory、TMAU 与 global-memory interface 的系统关系。该图表示专利允许的组织方式，不代表 GH100 的实际物理布局。</em></p>
 <p><a href="https://seanzw.github.io/posts/gpu_dsm_bw/">H200 DSM/TMA 带宽逆向实验</a> 进一步测量了多个 SM 同时执行 TMA remote put 时的扩展性：</p>
 <table>
@@ -100,10 +100,10 @@
 </tbody>
 </table>
 <p>这些模块组成一条从 SM 请求输入、请求展开、内存系统交互到完成跟踪的处理流水线。专利图 6 给出了各模块之间的连接关系：</p>
-<p><img src="assets/hardware/TMAU_patent_FIG6_request_pipeline_en.png" alt="TMAU 请求处理流水线" /></p>
+<p><img src="assets/hardware/TMAU_patent_FIG6_request_pipeline_en.png?v=f20623ae12ff" alt="TMAU 请求处理流水线" /></p>
 <p><em>图 4-2　TMAU 请求处理流水线。图片裁自 NVIDIA 专利 <a href="https://patentimages.storage.googleapis.com/d1/f5/46/4edecd80657a0d/US20230289292A1.pdf">US20230289292A1，FIG. 6</a>。该图表达的是逻辑模块与请求路径，不代表 GH100 芯片上的物理布局。</em></p>
 <p>图 4-2 主要展开请求与响应控制流水，没有画出连接本地 shared memory 的 payload 数据通路；该通路由本章的 Local SMEM Data Interface 功能模型补充。</p>
-<p><img src="assets/hardware/US20230289292A1_FIG2_load_and_completion_en.png" alt="TMAU load、SMEM 写入与同步路径" /></p>
+<p><img src="assets/hardware/US20230289292A1_FIG2_load_and_completion_en.png?v=1952a126dbb0" alt="TMAU load、SMEM 写入与同步路径" /></p>
 <p><em>图 4-3　专利 FIG. 2 给出的高层请求、L2 子请求、数据返回、SMEM 写入与同步关系。</em></p>
 <p>FIG. 2 中，SM 通过操作 204 向 TMAU 提交一次高层请求；TMAU 通过操作 206 向 L2 发出多个子请求。专利对目的 SMEM 写入给出两种实施方式：L2 可通过操作 210 将 sub-block 直接写入 SMEM；数据也可通过操作 208 返回 TMAU，再由 TMAU 通过操作 212 写入 SMEM。两种路径均在目的数据写入后通过操作 214 与 SM 同步。<a href="https://patents.google.com/patent/US20230289292A1/en">US20230289292A1，FIG. 2 及对应说明</a></p>
 <p>其中，MIOC 和 Request Queue 构成请求前端；Descriptor Cache、Setup Block 与 Request Generator 负责把 descriptor 驱动的高层操作展开为线性内存事务；GNIC 及其 Response Processor 负责与远端内存系统交换请求和数据；Local SMEM Data Interface 负责本地 SMEM 的源读取和目的写入；Response Completion Circuit 则把多个子请求重新汇总为一次 TMA 操作的完成状态。</p>
@@ -325,7 +325,7 @@ MIOC → Request Queue → TMA-cache → Setup Block → Request Generator</code
 <pre class="text"><code>Request Queue ── 指令信息 ──┐
                            ├──→ Setup ── 请求 context ──→ Request Generator
 Descriptor Cache ── desc ──┘</code></pre>
-<p><img src="assets/hardware/US20230289292A1_FIG5_parameter_partition_en.png" alt="Descriptor 参数与指令参数的分工" /></p>
+<p><img src="assets/hardware/US20230289292A1_FIG5_parameter_partition_en.png?v=b835456169e4" alt="Descriptor 参数与指令参数的分工" /></p>
 <p><em>图 4-4　专利 FIG. 5A/5B 给出的参数来源。Descriptor 提供 tensor 与访问块属性，指令提供本次访问的动态坐标；该图表示参数归属，不改变“先译码指令确定 descriptor 类型，再按类型译码 descriptor bits”的处理顺序。</em></p>
 <p>输出 context 是对完整请求的内部表示：它保留后续执行所需的信息，并加入预处理得到的派生参数，使 Request Generator 能够开始遍历。统一 context 是本章采用的功能模型；公开资料未披露其字段布局、存储形式和传递接口。</p>
 <h4 id="职责">职责</h4>
@@ -357,7 +357,7 @@ Descriptor Cache ── desc ──┘</code></pre>
 </tbody>
 </table>
 <p>专利明确描述了参数收集、计算和错误检查，并以 Table 1 展示 Setup 根据维数、interleave、tensor size 和 box corner 计算 <code>boundingBox[]</code> 的实例。具体校验项目及其他预计算的硬件归属未完整公开。<a href="https://patents.google.com/patent/US12141082B2/en">US12141082B2，Setup 说明及 Table 1</a></p>
-<p><img src="assets/hardware/US12141082B2_Table1_setup_en.png" alt="Setup 初始化 load tensor 的示例伪代码" /></p>
+<p><img src="assets/hardware/US12141082B2_Table1_setup_en.png?v=beac746b4530" alt="Setup 初始化 load tensor 的示例伪代码" /></p>
 <p><em>图 4-5　专利 Table 1 给出的 Setup 高层伪代码。该例根据 interleaving 和 dimensionality，将通道范围及各空间维范围组织为 <code>boundingBox[]</code>；它是初始化逻辑示例，不代表 Setup 的完整实现。</em></p>
 <p>两个模块的边界是：<strong>Setup 完成整条请求的一次性准备；Request Generator 推进多维坐标，执行当前位置的 OOB 判断和地址计算，并生成内存子请求。</strong> 按照这一分工，模式解释和请求级预计算可以移出反复执行的遍历过程；这属于对模块划分的逻辑解释。<a href="https://patents.google.com/patent/US12141082B2/en">US12141082B2，Request Generator 说明</a></p>
 <h4 id="前后级流水">前后级流水</h4>
@@ -411,7 +411,7 @@ Descriptor Cache ── desc ──┘</code></pre>
 </ol>
 <p>对于 tensor store，源 shared memory 被作为线性地址空间顺序读取，global destination 则按照 descriptor 描述的多维 tensor 解释。请求携带 descriptor 指针、shared-memory base address 和目的 tensor coordinates；Request Generator 据此把线性源数据映射到多维目的地址。<a href="https://patents.google.com/patent/US20230289292A1/en">US20230289292A1，Store and Reduction Requests</a></p>
 <p>FIG. 7B 以五层嵌套循环描述多维遍历的高层结构。实际请求生成还包括 L2 请求组织、swizzle 和越界数据处理。</p>
-<p><img src="assets/hardware/US12141082B2_FIG7B_request_generator_en.png" alt="Request Generator 五维遍历伪代码" /></p>
+<p><img src="assets/hardware/US12141082B2_FIG7B_request_generator_en.png?v=7143ab464bd2" alt="Request Generator 五维遍历伪代码" /></p>
 <p><em>图 4-6　专利 FIG. 7B 给出的 Request Generator 五维遍历高层伪代码。</em></p>
 <p>专利称单个子请求通常不超过一个 L2 cache line。NVIDIA 公开的缓存模型中，L2 cache line 为 128 B，由四个 32 B sector 组成；一个 L2 请求访问同一 cache line 中的一至四个 sector。Request Generator 据此将连续数据组织为 cache-line 范围内的请求，并对请求序列进行优化。</p>
 <p>对于 non-tensor 请求，Request Generator 按照相同的请求大小约束，将线性数据块拆分为多个 sub-block，依次计算其全局内存地址，并复用相同的发送与完成跟踪通路。</p>
@@ -672,7 +672,7 @@ mbarrier的tx-count减少</code></pre>
 <h4 id="l2-request-coalescer">L2 Request Coalescer</h4>
 <p>如果多个 CTA分别读取相同数据，每个 CTA都会产生独立的 L2请求和响应，相同数据将多次占用 L2端口及片上网络带宽。Multicast需要将这些重复访问合并成一次 L2读取，同时保留所有目标 CTA的信息，因此 NVIDIA在 L2侧引入了 L2 Request Coalescer，简称 LRC。</p>
 <p>LRC位于片上 Request/Response NoC与 L2 slice之间。它不保存 tensor数据，也不代替 L2 cache；其主要功能是保存 Multicast请求的目标和写入信息，向 L2发出普通读取，并在 L2 response返回后恢复多目标信息。</p>
-<p><img src="assets/hardware/LRC_Figure_2B_US12020035B2.png" alt="LRC 内部结构" /></p>
+<p><img src="assets/hardware/LRC_Figure_2B_US12020035B2.png?v=fc5ab50e7a31" alt="LRC 内部结构" /></p>
 <p><em>图 4-7　LRC 的内部结构。L2 Request Generator将 Multicast request转换为普通 L2 request，并把 Multicast元数据保存到 Tracking Circuitry and Metadata Storage；Multicast Response Generator在 L2 response返回后取回元数据，重新生成 Multicast response。图片裁自 NVIDIA 专利 <a href="https://patentimages.storage.googleapis.com/5b/32/a6/cde2adeb8ca46e/US12020035.pdf">US12020035B2，FIG. 2B</a>。</em></p>
 <p>专利给出每个 L2 slice 对应一个 LRC 的配置模型。因此，LRC 数量可以随 L2 slice 数量扩展；若按 H100 的 80 个 L2 slice 配置套用该模型，可推测有 80 个 LRC 服务实例或接口。这是结合产品配置与专利模型得到的推算。LRC 属于分布式 L2 子系统，其归属按 L2 slice 划分；TMAU 展开的不同 global-memory 子请求可以根据地址映射进入不同的 LRC 和 L2 slice。<a href="https://patents.google.com/patent/US12020035B2/en">US12020035B2，FIG. 7</a></p>
 <h4 id="支持-multicast-的-noc">支持 Multicast 的 NoC</h4>
@@ -736,14 +736,14 @@ mbarrier的tx-count减少</code></pre>
 <li>任意目标没有可用 credit时，整份 packet保留在输入队列中；</li>
 <li>Multicast packet可以使用独立的 credit和仲裁逻辑，并在部分节点获得高于普通 unicast的调度优先级。</li>
 </ul>
-<p><img src="assets/hardware/Multicast_Figure_9A_US12020035B2.png" alt="MXBAR Multidrop Switch" /></p>
+<p><img src="assets/hardware/Multicast_Figure_9A_US12020035B2.png?v=ca6f43472776" alt="MXBAR Multidrop Switch" /></p>
 <p><em>图 4-8　MXBAR Multidrop Switch。Creditor为 packet涉及的各目标分支取得 credit，Dispatcher完成仲裁，取得全部所需 credit后由 2D Fabric向目标 CPC方向发送。图片裁自 NVIDIA 专利 <a href="https://patentimages.storage.googleapis.com/5b/32/a6/cde2adeb8ca46e/US12020035.pdf">US12020035B2，FIG. 9A</a>。</em></p>
-<p><img src="assets/hardware/Multicast_Figure_9B_US12020035B2.png" alt="GPCARB Multicast Switch" /></p>
+<p><img src="assets/hardware/Multicast_Figure_9B_US12020035B2.png?v=743d0f3822ec" alt="GPCARB Multicast Switch" /></p>
 <p><em>图 4-9　GPCARB Multicast Switch。该节点在目标 CPC内部为多个目标 SM取得 Multicast credit、完成仲裁，并通过 2D Fabric把同一 packet分发到相应 SM。图片裁自 NVIDIA 专利 <a href="https://patentimages.storage.googleapis.com/5b/32/a6/cde2adeb8ca46e/US12020035.pdf">US12020035B2，FIG. 9B</a>。</em></p>
 <p>因此，Multicast response在多个目标共享的链路上保持单份，只在物理路径真正分叉的位置复制。这样既减少 L2读取次数，也减少公共 NoC链路上的重复流量。</p>
 <h4 id="multicast-请求的生命周期">Multicast 请求的生命周期</h4>
 <p>一条 TMA tensor操作可以展开成多个内存子请求。以下过程描述其中一个 Multicast子请求从 TMAU发出到全部目标完成的生命周期。</p>
-<p><img src="assets/hardware/Multicast_Figure_2A_US12020035B2.png" alt="Multicast 请求与响应的完整链路" /></p>
+<p><img src="assets/hardware/Multicast_Figure_2A_US12020035B2.png?v=e25dc2977a4d" alt="Multicast 请求与响应的完整链路" /></p>
 <p><em>图 4-10　Multicast请求与响应的完整链路。发起 SM经 Request XBAR向 LRC提交请求，LRC向 L2 slice执行一次普通读取，再经 Response XBAR将一份 Multicast response分发到多个目标 SM；非发起端目标 SM通过 ACK路径向发起 SM报告完成。图片裁自 NVIDIA 专利 <a href="https://patentimages.storage.googleapis.com/5b/32/a6/cde2adeb8ca46e/US12020035.pdf">US12020035B2，FIG. 2A</a>。</em></p>
 <h5 id="tmau-生成请求">1. TMAU 生成请求</h5>
 <p>TMAU的 Request Generator根据 Tensor Map和动态 tensor坐标计算 global地址，并生成普通内存请求所需的字段，例如：</p>

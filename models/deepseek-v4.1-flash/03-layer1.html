@@ -103,7 +103,7 @@ p^{(0)}_{\mathrm{next}}:[B,S,4]\quad\text{(FP32)}.
 <p>固定配置中 <code>compress_ratios[1]=0</code>，而 <code>kv_source_layers</code> 与 <code>index_source_layers</code> 都从 Layer 2 开始。因此 Layer 1 与 Layer 0 一样只执行 SWA；本页新增的注意力外路径只有 Engram。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">配置核查</a></p>
 <h2 id="engram">2. Engram</h2>
 <h3 id="从-token-到-24-个查表结果">2.1 从 Token 到 24 个查表结果</h3>
-<p><img src="assets/13_layer1_engram_lookup.png" alt="图 1：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表" /></p>
+<p><img src="assets/13_layer1_engram_lookup.png?v=ae4b934b8130" alt="图 1：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表" /></p>
 <p>图 1 从左到右依次经过 Token 压缩、历史补齐、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>-gram Hash、分区寻址和参数表查找。图中的蓝色块表示随 batch 和序列变化的张量，黄色块表示固定 buffer 或模型参数，绿色块表示计算步骤。</p>
 <p>主要对象如下：</p>
 <table>
@@ -251,7 +251,7 @@ I_{\mathrm{all}}:[B,S,2,24].
 </annotation></semantics></math></p>
 <p>执行 Layer 1 时只取第一个切片 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">[</mo><mo>:</mo><mo>,</mo><mo>:</mo><mo>,</mo><mn>0</mn><mo>,</mo><mo>:</mo><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">I_{\mathrm{all}}[:,:,0,:]</annotation></semantics></math>。图 1 为了说明 Layer 1 的算子数据流，只画出了这个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>24</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B,S,24]</annotation></semantics></math> 切片。</p>
 <h3 id="从查表结果到四路残差写回">2.2 从查表结果到四路残差写回</h3>
-<p><img src="assets/14_layer1_engram_computation.png" alt="图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回" /></p>
+<p><img src="assets/14_layer1_engram_computation.png?v=08d4de8a051b" alt="图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回" /></p>
 <p>图 2 接续图 1 的输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">E_{\mathrm{flat}}</annotation></semantics></math>。查表结果先投影为四路 Key 和一份共享 Value，再与四路残差分别计算 Gate，最后把同一份 Value 按不同幅度写回四路。</p>
 <p>主要输入和参数如下：</p>
 <table>

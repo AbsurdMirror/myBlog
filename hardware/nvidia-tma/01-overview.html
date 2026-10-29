@@ -287,7 +287,7 @@
 <p>以 multicast 为例，CUDA Programming Guide 建议在 <code>sm_90a</code> 上使用其优化路径；PTX 的其他 TMA 扩展也分别规定最低 target 或 <code>a/f</code> target [S001][S018]。<a href="02-hopper-ptx.html">第二章</a>记录 Hopper 变体的 target 限制，<a href="03-blackwell-rubin-ptx.html">第三章</a>继续整理 Blackwell 与 Rubin 的 target 分化。</p>
 <h2 id="hopper首代-tma-的能力基线">1.4 Hopper：首代 TMA 的能力基线</h2>
 <h3 id="基本执行模型">1.4.1 基本执行模型</h3>
-<p><img src="assets/01-tma-execution-model.svg" alt="TMA 基本执行模型：Tensor Map 创建、线程提交、异步执行与两类完成路径" /></p>
+<p><img src="assets/01-tma-execution-model.svg?v=21fd9fd4b54f" alt="TMA 基本执行模型：Tensor Map 创建、线程提交、异步执行与两类完成路径" /></p>
 <p>多维 TMA 操作的基本流程为：</p>
 <ol type="1">
 <li>软件通过 CUDA API 创建 tensor map，编码 global tensor 的基址、维度、stride、box、element stride、interleave、swizzle、L2 promotion 和 OOB fill 等属性；</li>
@@ -298,7 +298,7 @@
 </ol>
 <p>一维连续 bulk copy 直接使用源地址、目标地址和字节数，不需要 tensor map [S001]。TMA 操作属于 async proxy；跨 generic proxy 与 async proxy 的访问需要遵循相应 fence 和完成语义 [S001][S012]。</p>
 <h3 id="首代公共能力">1.4.2 首代公共能力</h3>
-<p><img src="assets/02-first-generation-capabilities.svg" alt="首代 TMA 公共能力基线：搬运形态、传输方向、Cluster 分发、数据操作、完成机制与 Tensor Map 属性" /></p>
+<p><img src="assets/02-first-generation-capabilities.svg?v=2014df35ae39" alt="首代 TMA 公共能力基线：搬运形态、传输方向、Cluster 分发、数据操作、完成机制与 Tensor Map 属性" /></p>
 <p>PTX 8.0 建立了 Hopper TMA 的公共能力基线 [S002][S003][S012]：</p>
 <ul>
 <li>一维连续 bulk copy；</li>
@@ -314,7 +314,7 @@
 </ul>
 <p>首代 TMA 覆盖连续块、1D–5D 张量、多种传输方向、cluster 分发、布局处理、reduction、prefetch 和完成语义。这些能力共同构成后续代际扩展的比较基线 [S001][S003][S012]。</p>
 <h3 id="与-ampere-cp.async-的对照">1.4.3 与 Ampere <code>cp.async</code> 的对照</h3>
-<p><img src="assets/03-ampere-hopper-comparison.svg" alt="同一二维 tile 在 Ampere cp.async 与 Hopper TMA 执行模型下的搬运路径" /></p>
+<p><img src="assets/03-ampere-hopper-comparison.svg?v=ca0e0731b107" alt="同一二维 tile 在 Ampere cp.async 与 Hopper TMA 执行模型下的搬运路径" /></p>
 <table>
 <colgroup>
 <col style="width: 33%" />
@@ -368,11 +368,11 @@
 </table>
 <h2 id="后续产品与-tma-功能演进">1.5 后续产品与 TMA 功能演进</h2>
 <h3 id="h200-与-gh200hopper-产品扩展">1.5.1 H200 与 GH200：Hopper 产品扩展</h3>
-<p><img src="assets/04-h200-gh200.svg" alt="H200 与 GH200 延续 Hopper TMA 基线，分别扩展内存系统和 CPU-GPU 系统形态" /></p>
+<p><img src="assets/04-h200-gh200.svg?v=bc171e4c2065" alt="H200 与 GH200 延续 Hopper TMA 基线，分别扩展内存系统和 CPU-GPU 系统形态" /></p>
 <p>H200 和 GH200 的 GPU 部分继续采用 Hopper/CC 9.0。H200 的主要产品变化是 HBM3e、显存容量和带宽；GH200 把 Hopper GPU 与 Grace CPU 通过 NVLink-C2C 组成 coherent superchip [S011][S015][S026]。</p>
 <p>这些变化会改变 TMA 所处的内存系统和应用规模。当前官方接口资料未给出 H200 或 GH200 专属的 TMA 操作增量，因此本章将其归入 Hopper 产品扩展。H100、H200 和 GH200 上的具体 TMA 延迟、吞吐与并发差异保留为后续实验问题 [S011][S015][S026]。</p>
 <h3 id="blackwelltma-功能扩展阶段">1.5.2 Blackwell：TMA 功能扩展阶段</h3>
-<p><img src="assets/05-blackwell-features.svg" alt="Blackwell PTX 8.6 至 8.8 的 TMA 接口增量及其相对 Hopper 基线的位置" /></p>
+<p><img src="assets/05-blackwell-features.svg?v=2ad231495f9b" alt="Blackwell PTX 8.6 至 8.8 的 TMA 接口增量及其相对 Hopper 基线的位置" /></p>
 <p>PTX 8.6–8.8 为 Blackwell 相关目标增加并扩展了多项 TMA 表达 [S018]：</p>
 <ul>
 <li><code>cp.async.bulk</code> 和 <code>cp.async.bulk.tensor</code> 的 global-to-shared 路径增加 <code>.shared::cta</code> 目的状态空间，显式区分本 CTA 的本地投递与既有 <code>.shared::cluster</code> 的 cluster/remote 投递；</li>
@@ -385,14 +385,14 @@
 <p>这些增量在 ISA 中细分了 TMA 的本地与 cluster 目的路径，并扩展了 CTA-group 拓扑、选择性写回、非连续行访问、卷积窗口访问和布局描述能力。本文据此将 Blackwell 标记为第二个 TMA <strong>功能阶段</strong>。该结论描述公共编程能力的变化，不预判 TMA 硬件单元的内部代际 [S018]。</p>
 <p>PTX 8.8 还引入 family-specific target，使部分特性可以在同一 GPU family 的多个 Compute Capability 间共享。这是 target 表达体系的变化，不属于 TMA 数据操作本身；它决定具体 TMA 变体可向哪些目标开放，下一节单独整理 [S018]。</p>
 <h3 id="blackwell-各-target-的能力分化">1.5.3 Blackwell 各 target 的能力分化</h3>
-<p><img src="assets/06-blackwell-targets.svg" alt="Blackwell 产品分支、Compute Capability、PTX target 与 a/f target 的能力分化" /></p>
+<p><img src="assets/06-blackwell-targets.svg?v=eaff463d083f" alt="Blackwell 产品分支、Compute Capability、PTX target 与 a/f target 的能力分化" /></p>
 <p>Blackwell 数据中心和 workstation/consumer 产品分布在 CC 10.0、10.3、12.0 与 12.1；同期产品表还列出 CC 11.0 的 Jetson 分支。PTX 对 <code>sm_100/103</code>、<code>sm_110</code> 与 <code>sm_120/121</code> 的指令变体和限制分别定义；<code>a</code> target 和 <code>f</code> target 又提供不同的特性集合 [S011][S018][S023]。</p>
 <p>因此，<a href="03-blackwell-rubin-ptx.html">第三章</a>将 Blackwell 数据中心、Jetson、workstation/consumer 和 GB10 分支分别映射到具体 target。本文的“Blackwell 功能阶段”表示这一时期出现了确定的 TMA 接口增量，不表示所有相关产品拥有完全相同的 TMA 指令集合 [S018][S023]。</p>
 <h3 id="blackwell-ultra产品与-target-扩展">1.5.4 Blackwell Ultra：产品与 target 扩展</h3>
-<p><img src="assets/07-blackwell-ultra.svg" alt="Blackwell Ultra 的已知产品映射、证据边界和后续验证路径" /></p>
+<p><img src="assets/07-blackwell-ultra.svg?v=b8f9bb950b92" alt="Blackwell Ultra 的已知产品映射、证据边界和后续验证路径" /></p>
 <p>B300/GB300 是 Blackwell Ultra 产品节点，官方产品表将其映射为 CC 10.3 [S011][S017]。截至本章调研截止日期，公开产品资料没有单独列出 B300/GB300 专属的 TMA 功能。本文先把它归入 Blackwell 功能阶段中的产品与 target 扩展；其实现差异和性能差异需要由 PTX target、SASS 与实测进一步识别。</p>
 <h3 id="rubin运行时-descriptor-override">1.5.5 Rubin：运行时 descriptor override</h3>
-<p><img src="assets/08-rubin-descriptor-override.svg" alt="Rubin 运行时 descriptor override：共享布局模板并在提交时覆盖地址、维度和步长" /></p>
+<p><img src="assets/08-rubin-descriptor-override.svg?v=562aa45e948d" alt="Rubin 运行时 descriptor override：共享布局模板并在提交时覆盖地址、维度和步长" /></p>
 <p>Rubin 的公开 TMA 增量面向布局相同、内存位置不同的张量。NVIDIA 的 Rubin 架构文章称其为 <strong>inline descriptor update</strong> [S021]：</p>
 <ul>
 <li>多个布局相同的张量可以共享一个 descriptor；</li>
