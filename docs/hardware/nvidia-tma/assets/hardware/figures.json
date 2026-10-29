@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "figures": [
+    {
+      "id": "LRC_Figure_2B_US12020035B2",
+      "file": "LRC_Figure_2B_US12020035B2.png",
+      "sha256": "fc5ab50e7a31db272b0361033d9b012f3205834807d9ba465068ff177991f12e",
+      "bytes": 91294,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "Multicast_Figure_2A_US12020035B2",
+      "file": "Multicast_Figure_2A_US12020035B2.png",
+      "sha256": "e25dc2977a4d2d3fed921eaf3138e3016bdc5f3cce8aa4dda16c9709de0de35d",
+      "bytes": 173920,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "Multicast_Figure_9A_US12020035B2",
+      "file": "Multicast_Figure_9A_US12020035B2.png",
+      "sha256": "ca6f434727766a644358450e4749141076f60a8b82cb274d0ef3e780afbcf13a",
+      "bytes": 228908,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "Multicast_Figure_9B_US12020035B2",
+      "file": "Multicast_Figure_9B_US12020035B2.png",
+      "sha256": "743d0f3822ec17f3d71076f77f4082801e24c2765aea0b96d3aca0864d5ac077",
+      "bytes": 283433,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "TMAU_patent_FIG6_request_pipeline_en",
+      "file": "TMAU_patent_FIG6_request_pipeline_en.png",
+      "sha256": "f20623ae12ff99dfa05ab8023cf6c5638b1bd8ee7037cc753efdd290b14cc0c4",
+      "bytes": 68887,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "US12141082B2_FIG7B_request_generator_en",
+      "file": "US12141082B2_FIG7B_request_generator_en.png",
+      "sha256": "7143ab464bd245994ba24541cb7514ecc218040947f2067000bf8557dd17ab17",
+      "bytes": 143303,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "US12141082B2_Table1_setup_en",
+      "file": "US12141082B2_Table1_setup_en.png",
+      "sha256": "beac746b4530c11eed7c459375247f6f93ae3ebe737c6f98a20e96db78c8ee7c",
+      "bytes": 315529,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "US20230289292A1_FIG1_system_context_en",
+      "file": "US20230289292A1_FIG1_system_context_en.png",
+      "sha256": "2cd7ce0743ff5ba45fc2eaa7652739c868e68e4313100e460d096d88d0000914",
+      "bytes": 193254,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "US20230289292A1_FIG2_load_and_completion_en",
+      "file": "US20230289292A1_FIG2_load_and_completion_en.png",
+      "sha256": "1952a126dbb06ab9bfb44f4ca1251a82a6adc6d607c640d6fc70ed6e8d9be30b",
+      "bytes": 83804,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    },
+    {
+      "id": "US20230289292A1_FIG5_parameter_partition_en",
+      "file": "US20230289292A1_FIG5_parameter_partition_en.png",
+      "sha256": "b835456169e482a06544ffff32ccbb2d404ccfdc202e0ceaf91f108551e9b9f0",
+      "bytes": 172437,
+      "source": "NVIDIA patent figure; attribution in chapter caption",
+      "selection": "user-selected"
+    }
+  ]
+}

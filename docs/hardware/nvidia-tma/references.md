@@ -54,4 +54,19 @@ updated: 2026-10-21
 
 ---
 
-[返回 TMA 系列目录](index.md) · [第一章](01-overview.md) · [第二章](02-hopper-ptx.md) · [第三章](03-blackwell-rubin-ptx.md)
+## 第四章主要资料
+
+- [US12499052B2：TMAU 请求流水线与数据搬运](https://patents.google.com/patent/US12499052B2/en)
+- [US12141082B2：Tensor 请求展开与完成跟踪](https://patents.google.com/patent/US12141082B2/en)
+- [US20240168765A1：Tensor descriptor 缓存、更新与同步](https://patents.google.com/patent/US20240168765A1/en)
+- [US20240176663A1：Tensor Map Cache Storage](https://patents.google.com/patent/US20240176663A1/en)
+- [US12020035B2：Multicast 请求、NoC 分发与 ACK](https://patents.google.com/patent/US12020035B2/en)
+- [US12248788B2：Distributed Shared Memory](https://patents.google.com/patent/US12248788B2/en)
+- [H200 DSM/TMA 带宽实验](https://seanzw.github.io/posts/gpu_dsm_bw/)
+- [Crucible Notes：Async Copy、mbarrier 与 TMA 反汇编](https://gh.evko.io/crucible-notes/ptxas/sass-isa/async-copy.html)
+
+其余 scoreboard、异步流水线和性能指标资料在第四章对应段落直接链接。
+
+---
+
+[返回 TMA 系列目录](index.md) · [第一章](01-overview.md) · [第二章](02-hopper-ptx.md) · [第三章](03-blackwell-rubin-ptx.md) · [第四章](04-hardware-design.md)

@@ -1,7 +1,7 @@
 ---
 title: 图解技术笔记
 status: published
-updated: 2026-10-21
+updated: 2026-10-29
 ---
 
 # 图解技术笔记
@@ -14,7 +14,7 @@ updated: 2026-10-21
 
 [阅读 NVIDIA TMA 调研系列](hardware/nvidia-tma/index.md)
 
-前三章已经发布：先从 Ampere、Hopper、Blackwell 到 Rubin 建立 TMA 产品与能力演进地图，再依次深入 Hopper 第一代接口与 PTX 8.6–9.4 的后续演进。
+前四章已经发布：从产品演进到 Hopper、Blackwell 与 Rubin 的 PTX 接口，再结合专利与逆向资料分析 TMA 内部模块、数据通路、Multicast 和 Group 完成机制。
 
 ## 模型解析
 

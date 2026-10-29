@@ -853,4 +853,4 @@ applypriority.async.bulk.tensor.3d.global.bulk_group.tile.L2::evict_normal
 
 ---
 
-[返回系列目录](index.md) · [上一篇：Hopper 第一代 TMA 的 PTX 设计](02-hopper-ptx.md) · [参考资料索引](references.md)
+[返回系列目录](index.md) · [上一篇：Hopper 第一代 TMA 的 PTX 设计](02-hopper-ptx.md) · [下一篇：TMA 硬件设计](04-hardware-design.md) · [参考资料索引](references.md)

@@ -12,6 +12,7 @@ import posixpath
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -33,7 +34,7 @@ def main() -> None:
     # Never delete sources or write outside the repository by accident.
     if not output.is_relative_to(ROOT) or output in {ROOT,ROOT/'docs',ROOT/'archive',ROOT/'scripts',ROOT/'theme'}:
         raise SystemExit('Unsafe output directory')
-    subprocess.run(['python',str(ROOT/'scripts/check.py')]+([] if args.preview else ['--published-only']),check=True)
+    subprocess.run([sys.executable,str(ROOT/'scripts/check.py')]+([] if args.preview else ['--published-only']),check=True)
     mode='preview' if args.preview else 'published'
     pages=json.loads((ROOT/'publication.json').read_text(encoding='utf-8'))[mode]
     page_info=[]
