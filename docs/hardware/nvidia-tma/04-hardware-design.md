@@ -357,18 +357,18 @@ FIG. 7B 以五层嵌套循环描述多维遍历的高层结构。实际请求生
 
 一条 TMA transaction 可以展开为多个 L2 子请求。Request Generator 负责持续生成和发送子请求，Response Completion Circuit 负责跟踪其完成状态：
 
-$
+$$
 \text{发送 L2 子请求：}\quad outstanding \leftarrow outstanding+1
-$
+$$
 
-$
+$$
 \text{收到对应完成事件：}\quad outstanding \leftarrow outstanding-1
-$
+$$
 
-$
+$$
 \text{全部子请求已发出}\ \land\ outstanding=0
 \quad\Rightarrow\quad \text{所跟踪阶段完成}
-$
+$$
 
 该设计将请求生成与返回等待解耦，使 Request Generator 能够在前序子请求仍处于在途状态时继续展开当前 transaction。请求展开期间，计数器可能暂时归零；只有全部子请求均已发出且对应完成事件全部返回，才能判定所跟踪阶段完成。对于 load，若计数器跟踪的是 L2 读响应，归零只表示远端读取完成；整笔搬运还需要目的 SMEM 写入完成。
 
