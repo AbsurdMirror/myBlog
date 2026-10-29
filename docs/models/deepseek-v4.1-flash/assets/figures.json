@@ -4,15 +4,22 @@
     {
       "id": "layer0-01",
       "file": "01_layer0_overview.png",
-      "sha256": "8781a1771d01dc119bc5d11c166a3b4e4d185920fb2ee01609705fa2c42c2cd4",
-      "bytes": 1372471,
-      "width": 1422,
-      "height": 1106,
-      "selection": "user-selected",
+      "sha256": "4047aa3f67182add343af7acb7b8b4d3797e1d21fb597832d1189876124d4a34",
+      "bytes": 207531,
+      "width": 2469,
+      "height": 1492,
+      "selection": "user-approved-tdg",
       "semantic_review": "needs-annotation-review",
       "notes": [
         "第0层顶部pre为固定[1,0,0,0]；comb的16按每token元素数读。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_overview.tdg",
+        "source_sha256": "df32c006a8aff16796482c8c87f1bf3539692bf7bca84b646c6cfe8fca023139",
+        "article_figure": 1,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-02",
@@ -21,137 +28,212 @@
       "bytes": 1883417,
       "width": 1086,
       "height": 1448,
-      "selection": "user-selected",
+      "selection": "user-selected-original-blog-image",
       "semantic_review": "needs-annotation-review",
       "notes": [
         "投影还读取Xf，不能把r视为唯一输入；保留原图不改线。"
-      ]
+      ],
+      "rendering": {
+        "tool": "original-blog-image",
+        "article_figure": 2,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-03",
       "file": "03_mhc_coefficient_generation.png",
-      "sha256": "6bb128eedd969ca3c0fd384fcc0ed448f3bc4b10e3e682f67dc802cd56b85e7f",
-      "bytes": 2862228,
-      "width": 1024,
-      "height": 1536,
-      "selection": "user-selected",
+      "sha256": "89f4ac100a5bfbd050b2eb682ce5dabeea9374cd7b3eb4c44852505ba5061c1c",
+      "bytes": 127780,
+      "width": 1568,
+      "height": 1170,
+      "selection": "user-approved-tdg",
       "semantic_review": "needs-annotation-review",
       "notes": [
         "底部epsilon括号容易误读；应在row Softmax之后相加。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_mhc_coefficient_formula.tdg",
+        "source_sha256": "c76083468cad2470cd322e4fdfb4577b6c1e1c2b45894010be0adec568ba095c",
+        "article_figure": 3,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-04",
       "file": "04_mhc_hc_pre.png",
-      "sha256": "e1d6d3cb3852e05bbd4345c7ded155397f4d83bc1fde38ca5e2822a4132d5bb5",
-      "bytes": 1768649,
-      "width": 1448,
-      "height": 1086,
-      "selection": "user-selected",
+      "sha256": "1181fbbaf33f0f91ef733e6528ff543b7ccdb7783e46866c7f01c17672c5ec8e",
+      "bytes": 60734,
+      "width": 1030,
+      "height": 740,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed",
-      "notes": []
+      "notes": [],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_mhc_pre.tdg",
+        "source_sha256": "d552f193a7fe355e46a66678a99905492bccd1f84d89fcc15a0681f169fff9b1",
+        "article_figure": 4,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-05",
       "file": "05_mhc_hc_post.png",
-      "sha256": "457a6e636beffc5d3cd6cccb8d05b62b10c2597598d9e72c26f94e7bf12c0c84",
-      "bytes": 2069709,
-      "width": 1448,
-      "height": 1086,
-      "selection": "user-selected",
+      "sha256": "e7098abe4c06312a380237c7878f3be15d35a9c2f3712313203d4ba03b24604e",
+      "bytes": 107790,
+      "width": 1719,
+      "height": 942,
+      "selection": "user-approved-tdg",
       "semantic_review": "needs-annotation-review",
       "notes": [
         "右侧固定输出j应读取全部4路Xi；post_j广播形状为[B*S,1]。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_mhc_post.tdg",
+        "source_sha256": "b20cce6e88753cf9f4a5bc632e812f88a3b4622ddebfae82f442967973a5b971",
+        "article_figure": 5,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-06",
       "file": "06_swa_q_kv_window.png",
-      "sha256": "442a29ee70e2390d196b2841f7553bba685b2c282ba5a63d7d8812f3dfb2aa78",
-      "bytes": 1559159,
-      "width": 1819,
-      "height": 865,
-      "selection": "user-selected",
+      "sha256": "441d7056f8282de984097a45b0c0577c3d4b2c9c8f9009d342c860d9284215bf",
+      "bytes": 101040,
+      "width": 1957,
+      "height": 696,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed-with-text-qualification",
       "notes": [
         "图中的C_win是逻辑视图；prefill通过topk_idxs索引当前C并更新环形缓存，decode再索引缓存，不要求完整物化C_win。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_swa_q_kv_window.workflow.hard-rule-retest-isolated-e29.tdg",
+        "source_sha256": "b1a711404f38ff8135a70d827b3027ff4dcda6701d1f79150fc953f3281ef3d5",
+        "article_figure": 7,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-07",
       "file": "07_swa_mask_sink_softmax.png",
-      "sha256": "b9fb93894b30d1d65a9c864dd6b37da53f19ab23e89e1b98e77745d7070da358",
-      "bytes": 1340323,
-      "width": 2048,
-      "height": 682,
-      "selection": "user-selected",
+      "sha256": "00d5763a0a77536d431b4fa401e2f1b083c4d60c3820c1694c1a6c8538a856af",
+      "bytes": 84641,
+      "width": 2487,
+      "height": 614,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed",
       "notes": [
         "正文用绝对位置定义SWA mask，并补充数值稳定的在线sink softmax。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_swa_mask_sink_softmax.step4-candidate.tdg",
+        "source_sha256": "665332b54118cc5234c9b0b8a25899c2876e282399857ae25a6e6357c10703bd",
+        "article_figure": 8,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-08",
       "file": "08_swa_output_projection.png",
-      "sha256": "53e732b7e8fe2b6374894f1048594f55fa32aa69c5c02cbaf8033575c0a8f953",
-      "bytes": 1208838,
-      "width": 2048,
-      "height": 682,
-      "selection": "user-selected",
+      "sha256": "053892627c52873166b6eb9b88c851799996bbb06d2bb185328cd0186069bbb7",
+      "bytes": 55537,
+      "width": 1979,
+      "height": 461,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed",
-      "notes": []
+      "notes": [],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_swa_output_projection.tdg",
+        "source_sha256": "7142db8a1c68f2e466f6829c879dbeff79755b77860ada35ba8506cdd89e94c9",
+        "article_figure": 9,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-09",
       "file": "09_rmsnorm_forward.png",
-      "sha256": "e9b876902f2a3f4e57e3911275d25e697d98c97b9fa2fdbbb4603bffa49992ce",
-      "bytes": 2077232,
-      "width": 1367,
-      "height": 1150,
-      "selection": "user-selected",
+      "sha256": "26255bc6da55253a64d3a2a8857cca9ffb7dd649f289f1111e8d162049cce248",
+      "bytes": 87643,
+      "width": 1358,
+      "height": 803,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed",
       "notes": [
         "正文补充FP32内部计算、BF16输入输出与gamma，以及两套入口Norm的参数和显存复用口径。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_rmsnorm_forward.step4-candidate.tdg",
+        "source_sha256": "2818e2bcee76303fee7e0c47d6ae99fe75db77163ea47b941ec5fe59cf95a33a",
+        "article_figure": 6,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-10",
       "file": "10_moe_router.png",
-      "sha256": "065bb23b5a757e1596ebea52b13b44575946285d895df5bb397b0a531854b600",
-      "bytes": 1573802,
-      "width": 1448,
-      "height": 1086,
-      "selection": "user-supplied",
+      "sha256": "c43164515ec59682ac970ce624b30af62c5fe847793c6573010bf84f54ab8564",
+      "bytes": 75376,
+      "width": 2130,
+      "height": 829,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed",
       "notes": [
         "已对照固定revision核查：文本/视觉修正量只影响Top-6选择，权重从原始Sqrt-Softplus分数gather并归一化。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_moe_router.step4-candidate.tdg",
+        "source_sha256": "bf4c7ed5042435f2d59426eff06a5d64cb7cfe52b83571ee5ac4b770b072a1b4",
+        "article_figure": 10,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-11",
       "file": "11_moe_expert_parameter_gather.png",
-      "sha256": "d31873a8ab6e55bdf0111c0bdc2d973a042eb3a1eddd2bff80814922d82ce1be",
-      "bytes": 1346882,
-      "width": 1774,
-      "height": 887,
-      "selection": "user-supplied",
+      "sha256": "745300771ad1069b6a17bb68f8a81f0bd34132b0f58471f384201d4ee6d07047",
+      "bytes": 93736,
+      "width": 2075,
+      "height": 930,
+      "selection": "user-approved-tdg",
       "semantic_review": "reviewed-with-text-qualification",
       "notes": [
         "图中矩阵尺寸按行向量乘法的[input,output]视角标注；正文统一按PyTorch参数存储[output,input]书写。gather是逻辑视图，不表示逐token复制完整专家权重。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_moe_expert_parameter_gather.tdg",
+        "source_sha256": "e67a0ad4d31f35d48f72d45cad99fde89245f82c8ddb68c3362f3214109133e6",
+        "article_figure": 11,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer0-12",
       "file": "12_moe_expert_computation.png",
-      "sha256": "2b0b1d39604e4b813d4f139a697edcd2992379e84bcbf042551f5af0c1d9eba2",
-      "bytes": 1742853,
-      "width": 1774,
-      "height": 887,
-      "selection": "user-supplied-corrected",
+      "sha256": "c37f61ae373503d64450290302e875ee987cc1d5d33e53c041e644c565f21d90",
+      "bytes": 413077,
+      "width": 4409,
+      "height": 2098,
+      "selection": "tdg-readability-preview",
       "semantic_review": "reviewed",
       "notes": [
         "原始交付图两处Gate上限误写为min(G,0)；采用版依据官方clamp(gate,max=10)修正为min(G,10)，其余结构保持原风格。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-tikz",
+        "source": "examples/layer0_moe_expert_computation.step4.tdg",
+        "source_sha256": "94ce6d083f5dac6e1a46c5b77f5755d1e98327c8106ff2cc35d990035790845f",
+        "article_figure": 12,
+        "updated": "2026-10-29"
+      }
     },
     {
       "id": "layer1-01",

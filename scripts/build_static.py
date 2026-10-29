@@ -71,6 +71,11 @@ def main() -> None:
             dst=output/path.relative_to(ROOT/'docs')
             dst.parent.mkdir(parents=True,exist_ok=True)
             shutil.copy2(path,dst)
+            # A changed image must get a new URL even when a restored file has an old mtime.
+            digest=hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+            versioned=image+('&' if '?' in image else '?')+'v='+digest
+            content=content.replace('src="'+html.escape(image,quote=True)+'"',
+                                    'src="'+html.escape(versioned,quote=True)+'"')
         nav=''.join('<a href="'+html.escape(local_link(dest_rel,str(Path(p).with_suffix('.html')).replace('\\','/')))+'">'+html.escape(m.get('title',Path(p).stem))+'</a>' for p,m,_ in page_info)
         title=html.escape(meta.get('title',Path(rel).stem))
         badge='<span class="badge">PREVIEW · 预览</span>' if args.preview else ''
