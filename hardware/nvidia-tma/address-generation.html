@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>NVIDIA TMA：地址生成（Tile 与 Im2col） · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css?v=ad8b3e0d7f83"></head>
+<body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="03-blackwell-rubin-ptx.html">NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进</a><a href="04-hardware-design.html">NVIDIA TMA（四）：TMA 硬件设计</a><a href="address-generation.html">NVIDIA TMA：地址生成（Tile 与 Im2col）</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../models/deepseek-v4.1-flash/03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/address-generation.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="03-blackwell-rubin-ptx.html">NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进</a><a href="04-hardware-design.html">NVIDIA TMA（四）：TMA 硬件设计</a><a href="address-generation.html">NVIDIA TMA：地址生成（Tile 与 Im2col）</a><a href="references.html">NVIDIA TMA 调研参考资料索引</a><a href="../../models/deepseek-v4.1-flash/index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="../../models/deepseek-v4.1-flash/02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="../../models/deepseek-v4.1-flash/03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="tma-地址生成">TMA 地址生成</h1>
+<h2 id="tile-地址生成">1. Tile 地址生成</h2>
+<p>Tile 地址生成可以抽象为三个步骤：</p>
+<ol type="1">
+<li>读取原始 Tile 参数；</li>
+<li>根据 Interleave 布局转换维度和坐标；</li>
+<li>判断 OOB，并在最后根据坐标和字节跨度计算 Global Memory 地址。</li>
+</ol>
+<p>这里只讨论参数之间的逻辑关系。</p>
+<h3 id="输入参数">1.1 输入参数</h3>
+<table>
+<thead>
+<tr class="header">
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensorRank</code></td>
+<td>原始 Tensor 的维度数</td>
+</tr>
+<tr class="even">
+<td><code>globalAddress</code></td>
+<td>Tensor 的 Global Memory 基地址</td>
+</tr>
+<tr class="odd">
+<td><code>globalDim[i]</code></td>
+<td>原始第 <code>i</code> 维的大小</td>
+</tr>
+<tr class="even">
+<td><code>globalStrides[i]</code></td>
+<td>原始高维的字节跨度</td>
+</tr>
+<tr class="odd">
+<td><code>tensorCoords[i]</code></td>
+<td>本次 Tile 在第 <code>i</code> 维的起点</td>
+</tr>
+<tr class="even">
+<td><code>boxDim[i]</code></td>
+<td>本次 Tile 在第 <code>i</code> 维覆盖的范围</td>
+</tr>
+<tr class="odd">
+<td><code>elementStrides[i]</code></td>
+<td>本次 Tile 在第 <code>i</code> 维的遍历步长</td>
+</tr>
+<tr class="even">
+<td><code>tensorDataType</code></td>
+<td>元素类型，确定单个元素的字节数</td>
+</tr>
+<tr class="odd">
+<td><code>interleave</code></td>
+<td>确定通道的分组方式</td>
+</tr>
+</tbody>
+</table>
+<p>下文 <code>rank = tensorRank</code>，各展开式仅保留实际存在的维度。非 Interleave 时，先将 <code>elementStrides[0]</code> 按有效值 <code>1</code> 处理。</p>
+<h3 id="tile-box-的维度与总元素数">1.2 Tile Box 的维度与总元素数</h3>
+<pre class="ini"><code>boxShape[i] = ceil(boxDim[i] / elementStrides[i])
+总元素数 = boxShape[0] × boxShape[1] × ... × boxShape[rank-1]</code></pre>
+<h3 id="box-中各点的-global-tensor-坐标">1.3 Box 中各点的 Global Tensor 坐标</h3>
+<p>Box 中任意一点：</p>
+<pre class="ini"><code>boxIndex = [b0, b1, ..., b(rank-1)]
+0 &lt;= bi &lt; boxShape[i]  // i = 0 ... rank-1</code></pre>
+<h4 id="非-interleave">1.3.1 非 Interleave</h4>
+<pre class="ini"><code>globalCoord = [
+    tensorCoords[0] + b0 × elementStrides[0],
+    tensorCoords[1] + b1 × elementStrides[1],
+    ...,
+    tensorCoords[rank-1] + b(rank-1) × elementStrides[rank-1]
+] // rank维度</code></pre>
+<h4 id="interleave">1.3.2 Interleave</h4>
+<p><code>sliceElements</code> 表示每组元素数。</p>
+<pre class="ini"><code>globalCoord_0 = tensorCoords[0] × sliceElements + b0 × elementStrides[0]
+inner = globalCoord_0 % sliceElements
+slice = floor(globalCoord_0 / sliceElements)
+
+globalCoord = [
+    inner,
+    tensorCoords[1] + b1 × elementStrides[1],
+    ...,
+    tensorCoords[rank-2] + b(rank-2) × elementStrides[rank-2],
+    slice,
+    tensorCoords[rank-1] + b(rank-1) × elementStrides[rank-1]
+] // rank+1 维度</code></pre>
+<h3 id="oob-判断">1.4 OOB 判断</h3>
+<p>按原始 Tensor 各维检查坐标是否位于 <code>[0, globalDim[i])</code>：非 Interleave 直接使用 <code>globalCoord[i]</code>；Interleave 的第 0 维使用 <code>globalCoord_0</code>，其余维度使用 <code>tensorCoords[i] + bi × elementStrides[i]</code>。</p>
+<p>越界点按 OOB 配置填充；有效点继续计算地址。</p>
+<h3 id="global-memory-地址计算">1.5 Global Memory 地址计算</h3>
+<p>由 <code>tensorDataType</code> 确定 <code>elementBytes</code>，结合 <code>globalAddress</code> 和 <code>globalStrides</code> 计算地址。以下公式适用于每个元素占固定整数字节的数据类型。</p>
+<p>Interleave 的分组字节数为 <code>interleaveBytes</code>，与前面的逻辑分组大小对应：</p>
+<pre class="ini"><code>sliceElements = interleaveBytes / elementBytes</code></pre>
+<h4 id="非-interleave-1">1.5.1 非 Interleave</h4>
+<pre class="ini"><code>globalAddressOfPoint =
+    globalAddress
+    + globalCoord[0] × elementBytes
+    + globalCoord[1] × globalStrides[0]
+    + globalCoord[2] × globalStrides[1]
+    + ...
+    + globalCoord[rank-1] × globalStrides[rank-2]</code></pre>
+<h4 id="interleave-1">1.5.2 Interleave</h4>
+<pre class="ini"><code>globalAddressOfPoint =
+    globalAddress
+    + globalCoord[0] × elementBytes
+    + globalCoord[1] × interleaveBytes
+    + globalCoord[2] × globalStrides[0]
+    + ...
+    + globalCoord[rank] × globalStrides[rank-2]</code></pre>
+<p>规则参考：<a href="https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-tiled-mode">PTX ISA：Tiled mode</a>、<a href="https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__TENSOR__MEMORY.html">CUDA Driver API：Tensor Map</a>。</p>
+<h2 id="im2col-地址生成">2. Im2col 地址生成</h2>
+<p>Im2col 地址生成要回答的是：输出矩阵中的每个 <code>[channelIndex, pixelIndex]</code>，最终读取 Global Memory 中的哪个地址。先确定 Global Tensor 的维度和取数起点，再借助 Pixel Box 的局部坐标将输出点映射回原始数据，最后判断 OOB 并计算地址。</p>
+<h3 id="输入参数与两个-tensor">2.1 输入参数与两个 Tensor</h3>
+<p>输入直接描述了两个逻辑 Tensor：Global Tensor 是原始数据，原点为各维零坐标，<code>tensorCoords</code> 指定取数参考点；Im2col 是输出二维矩阵，原点为 <code>[channelIndex=0, pixelIndex=0]</code>。</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>tensorRank</code></td>
+<td>原始 Global Tensor 的维度数，支持 3D、4D、5D</td>
+</tr>
+<tr class="even">
+<td><code>globalAddress</code></td>
+<td>Global Tensor 原点的 Global Memory 地址</td>
+</tr>
+<tr class="odd">
+<td><code>globalDim</code></td>
+<td>原始 Global Tensor 各维大小</td>
+</tr>
+<tr class="even">
+<td><code>globalStrides</code></td>
+<td>原始 Tensor 各高维的字节跨度</td>
+</tr>
+<tr class="odd">
+<td><code>tensorCoords</code></td>
+<td>C/N 维起点，以及 W/H/D 维的 filter base</td>
+</tr>
+<tr class="even">
+<td><code>im2colOffsets</code></td>
+<td>从 filter base 到实际取数点的 W/H/D 偏移</td>
+</tr>
+<tr class="odd">
+<td><code>pixelBoxLowerCorner</code></td>
+<td>Pixel Box 相对 Global Tensor 空间各维起始边界的偏移</td>
+</tr>
+<tr class="even">
+<td><code>pixelBoxUpperCorner</code></td>
+<td>Pixel Box 相对 Global Tensor 空间各维终止边界的偏移</td>
+</tr>
+<tr class="odd">
+<td><code>channelsPerPixel</code></td>
+<td>Im2col 的通道维大小</td>
+</tr>
+<tr class="even">
+<td><code>pixelsPerColumn</code></td>
+<td>Im2col 的 pixel 维大小</td>
+</tr>
+<tr class="odd">
+<td><code>elementStrides</code></td>
+<td>W/H/D 各维的遍历步长</td>
+</tr>
+<tr class="even">
+<td><code>tensorDataType</code></td>
+<td>元素类型，确定单个元素的字节数</td>
+</tr>
+<tr class="odd">
+<td><code>interleave</code></td>
+<td>确定通道的分组方式</td>
+</tr>
+</tbody>
+</table>
+<p>原始数组从内到外的维度顺序为 <code>[C,W,N]</code>、<code>[C,W,H,N]</code> 或 <code>[C,W,H,D,N]</code>。下文用 C/W/H/D/N 作具名下标，表示这些数组中对应的维度。</p>
+<pre class="ini"><code>im2colIndex = [channelIndex, pixelIndex]
+0 &lt;= channelIndex &lt; channelsPerPixel
+0 &lt;= pixelIndex &lt; pixelsPerColumn</code></pre>
+<h3 id="统一-global-tensor-的表示">2.2 统一 Global Tensor 的表示</h3>
+<p>先将 Global Tensor 整理为统一的逻辑维度和参考坐标。后续的坐标转换都使用这套表示：</p>
+<pre class="ini"><code>globalShape[dim]     // 统一后各维的大小
+referenceCoord[dim]  // 取数参考点在该维的坐标</code></pre>
+<p>统一后的逻辑维度写成 <code>[C,W,(H,D),Cslice,N]</code>，只保留原始 Tensor 实际存在的 H/D。C 表示每组内部的通道，Cslice 表示通道组。普通布局将完整 C 作为一组，补入长度为 1 的 Cslice 维度，用于统一后续表达。</p>
+<p>先保留原始有效通道数。开启 Interleave 时，将布局给定的每组元素数量记作 <code>sliceElements</code>：</p>
+<pre class="ini"><code>validChannels = globalDim[C]</code></pre>
+<p>C 和 Cslice 的大小、参考坐标按下表转换。指令在 Interleave 布局中提供的 C 坐标以 slice 为单位：</p>
+<table>
+<thead>
+<tr class="header">
+<th>统一字段</th>
+<th>普通布局</th>
+<th>Interleave 布局</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>globalShape[C]</code></td>
+<td><code>globalDim[C]</code></td>
+<td><code>sliceElements</code></td>
+</tr>
+<tr class="even">
+<td><code>globalShape[Cslice]</code></td>
+<td><code>1</code></td>
+<td><code>ceil(globalDim[C] / sliceElements)</code></td>
+</tr>
+<tr class="odd">
+<td><code>referenceCoord[C]</code></td>
+<td><code>tensorCoords[C]</code></td>
+<td><code>0</code></td>
+</tr>
+<tr class="even">
+<td><code>referenceCoord[Cslice]</code></td>
+<td><code>0</code></td>
+<td><code>tensorCoords[C]</code></td>
+</tr>
+</tbody>
+</table>
+<p>N/W/H/D 的大小和参考坐标直接继承输入：</p>
+<pre class="ini"><code>globalShape[dim] = globalDim[dim]
+referenceCoord[dim] = tensorCoords[dim]  // dim = N/W/H/D</code></pre>
+<p>最后一个通道组可能只包含部分有效元素，后续用 <code>validChannels</code> 判断真实通道边界。</p>
+<p><img src="assets/address-generation/01-channel-grouping.svg?v=0a9c2a2f929e" alt="完整通道编号与 C、Cslice 坐标的对应关系" /></p>
+<p><em>图　10 个有效通道按每组 4 个元素展开；完整通道 9 对应 <code>C=1、Cslice=2</code>，最后两个格子超出有效通道范围。</em></p>
+<h3 id="确定实际取数起点">2.3 确定实际取数起点</h3>
+<p>在统一后的 Global Tensor 中，W/H/D 的参考点加上 <code>im2colOffsets</code>，得到实际取数起点 <code>startGlobalCoord</code>；N 和通道位置保持参考坐标：</p>
+<pre class="ini"><code>startGlobalCoord[dim] = referenceCoord[dim] + im2colOffsets[dim]  // dim = W/H/D
+startGlobalCoord[N] = referenceCoord[N]
+startGlobalCoord[C] = referenceCoord[C]
+startGlobalCoord[Cslice] = referenceCoord[Cslice]</code></pre>
+<p>这个点就是 Im2col 原点 <code>[0,0]</code> 对应的实际取数位置。</p>
+<h3 id="建立-pixel-box">2.4 建立 Pixel Box</h3>
+<p>Pixel Box 确定 W/H/D 的展开范围。将这个空间范围扩展到统一后的完整维度，N、C、Cslice 保留 Global Tensor 的范围，就得到用于坐标转换的独立 Pixel Box Tensor。它有自己的局部坐标系，局部原点为零。</p>
+<p><code>pixelBoxStart</code>、<code>pixelBoxEnd</code> 表示 Pixel Box 在统一后的 Global Tensor 坐标系中的起止位置，范围左闭右开；<code>pixelBoxWidth</code> 表示 Pixel Box 自身各维的大小。</p>
+<h4 id="n-维度">2.4.1 N 维度</h4>
+<pre class="ini"><code>pixelBoxStart[N] = 0
+pixelBoxEnd[N] = globalShape[N]
+pixelBoxWidth[N] = globalShape[N]</code></pre>
+<h4 id="whd-维度">2.4.2 W/H/D 维度</h4>
+<p>Global Tensor 的空间边界加上 lower、upper 和本次 offset，得到 Pixel Box 的空间范围。<code>im2colOffsets</code> 同时平移实际取数起点和 Pixel Box：</p>
+<pre class="ini"><code>pixelBoxStart[dim] = pixelBoxLowerCorner[dim] + im2colOffsets[dim]
+pixelBoxEnd[dim] = globalShape[dim] + pixelBoxUpperCorner[dim] + im2colOffsets[dim]
+pixelBoxWidth[dim] = pixelBoxEnd[dim] - pixelBoxStart[dim]</code></pre>
+<p>这里 <code>dim</code> 取当前 Tensor 存在的 W/H/D 维度。W 向右、H 向下时，lower 控制左、上边界，upper 控制右、下边界：lower 为负向外扩展，为正向内收缩；upper 为正向外扩展，为负向内收缩。D 使用相同规则。</p>
+<p><img src="assets/address-generation/02-pixel-box-bounds.svg?v=256c92444ea9" alt="Pixel Box 在 W/H 二维空间中四边扩展、四边收缩及混合的三种情况" /></p>
+<p><em>图　蓝色矩形为 Global Tensor，橙框为 Pixel Box；三个场景使用相同坐标比例，箭头从 Tensor 边界指向对应的 Box 边界。图中取 <code>im2colOffsets=0</code>，展示四边扩展、四边收缩，以及左/下扩展而右/上收缩。</em></p>
+<h4 id="c-与-cslice-维度">2.4.3 C 与 Cslice 维度</h4>
+<pre class="ini"><code>pixelBoxStart[C] = 0
+pixelBoxEnd[C] = globalShape[C]
+pixelBoxWidth[C] = globalShape[C]
+
+pixelBoxStart[Cslice] = 0
+pixelBoxEnd[Cslice] = globalShape[Cslice]
+pixelBoxWidth[Cslice] = globalShape[Cslice]</code></pre>
+<h3 id="将起点转换到-pixel-box">2.5 将起点转换到 Pixel Box</h3>
+<p>实际取数起点减去 Pixel Box 原点的位置，得到同一个点在 Pixel Box 局部坐标系中的 <code>startPixelBoxCoord</code>。这个转换对统一后的所有维度相同：</p>
+<pre class="ini"><code>startPixelBoxCoord[dim] = startGlobalCoord[dim] - pixelBoxStart[dim]</code></pre>
+<p>现在，Im2col 原点、Global Tensor 实际取数起点、Pixel Box 实际取数起点，已经对应到同一个数据位置。</p>
+<p><img src="assets/address-generation/03-start-coordinate.svg?v=0490b0ab92aa" alt="同一实际取数起点在 Global Tensor 和 Pixel Box 中的两套坐标" /></p>
+<p><em>图　Box 原点在 Global Tensor 中位于 <code>(-1,-1)</code>；同一实际取数起点的 Global 坐标为 <code>(2,1)</code>，Box 内部坐标为 <code>(3,2)</code>。</em></p>
+<h3 id="将-im2col-各点映射到-pixel-box">2.6 将 Im2col 各点映射到 Pixel Box</h3>
+<p>从 <code>startPixelBoxCoord</code> 出发，<code>pixelIndex</code> 决定 N/W/H/D 位置，<code>channelIndex</code> 决定 C/Cslice 位置。</p>
+<h4 id="pixel-位置">2.6.1 Pixel 位置</h4>
+<p>首个 pixel 的局部坐标就是 <code>startPixelBoxCoord</code>。按 PTX 的遍历规则，将后续空间位置写成递推映射；下面的 <code>nextPixel</code> 只作用于 N/W/H/D：</p>
+<pre class="ini"><code>pixelBoxCoord(0)[dim] = startPixelBoxCoord[dim]  // dim = N/W/H/D
+pixelBoxCoord(pixelIndex + 1) = nextPixel(pixelBoxCoord(pixelIndex))</code></pre>
+<p><code>nextPixel</code> 按 W → H → D → N 进位，只使用实际存在的维度。W 增加 <code>elementStrides[W]</code>；达到或超过 <code>pixelBoxWidth[W]</code> 时，W 回到 0，H 增加 <code>elementStrides[H]</code>。H 越界时回到 0 并向 D 进位，D 越界时回到 0 并使 N 增加 1。3D 的 W 直接向 N 进位，4D 的 H 直接向 N 进位。N 保留递增后的坐标，供后续 OOB 判断。</p>
+<p>因此，<code>pixelBoxCoord(pixelIndex)</code> 给出任意 <code>pixelIndex</code> 对应的空间位置。<code>pixelsPerColumn</code> 控制取多少个 pixel，Pixel Box 的大小和 <code>elementStrides</code> 控制位置如何推进。</p>
+<h4 id="通道位置">2.6.2 通道位置</h4>
+<p>在每个 pixel 上，从同一个通道起点连续读取 <code>channelsPerPixel</code> 个通道。先在 C/Cslice 子空间中计算完整通道编号，再按每组宽度展开：</p>
+<pre class="ini"><code>channel = startPixelBoxCoord[Cslice] × pixelBoxWidth[C] + startPixelBoxCoord[C] + channelIndex
+pixelBoxCoord[C] = channel % pixelBoxWidth[C]
+pixelBoxCoord[Cslice] = floor(channel / pixelBoxWidth[C])</code></pre>
+<p>C 增长到一组的宽度时回到 0，并向 Cslice 进位。将这两个分量与 N/W/H/D 合并，就得到了 <code>[channelIndex,pixelIndex]</code> 在 Pixel Box 中的完整局部坐标。</p>
+<h3 id="映射回-global-tensor-与-oob-判断">2.7 映射回 Global Tensor 与 OOB 判断</h3>
+<p>Pixel Box 中的各点加上它的原点位置，映射回统一后的 Global Tensor。所有维度使用同一个公式：</p>
+<pre class="ini"><code>globalCoord[dim] = pixelBoxStart[dim] + pixelBoxCoord[dim]</code></pre>
+<p>现在，每个 Im2col 元素都对应一个完整的逻辑坐标 <code>globalCoord</code>，各分量与 <code>globalShape</code> 一一对应。</p>
+<p>按统一后的各维大小检查坐标，并恢复完整通道编号，检查真实通道边界：</p>
+<pre class="ini"><code>globalChannel = globalCoord[Cslice] × globalShape[C] + globalCoord[C]
+OOB = 任一维度不满足 0 &lt;= globalCoord[dim] &lt; globalShape[dim]
+      或不满足 0 &lt;= globalChannel &lt; validChannels</code></pre>
+<p>OOB 点按配置填充 0 或 OOB-NaN；有效点继续计算 Global Memory 地址。</p>
+<h3 id="global-memory-地址计算-1">2.8 Global Memory 地址计算</h3>
+<p>此前得到的是各 Im2col 元素在 Global Tensor 中的逻辑坐标。由 <code>tensorDataType</code> 确定 <code>elementBytes</code>，结合 <code>globalAddress</code> 和 <code>globalStrides</code> 计算地址。以下地址公式适用于每个元素占固定整数字节的数据类型。</p>
+<p>开启 Interleave 时，<code>interleaveBytes</code> 取 16 B 或 32 B，与前面的逻辑分组大小对应：</p>
+<pre class="ini"><code>sliceElements = interleaveBytes / elementBytes  // 开启 Interleave 时</code></pre>
+<p>为统一后的每个逻辑维度配置字节跨度 <code>byteStride</code>。其中 <code>rank = tensorRank</code>，只保留当前 Tensor 实际存在的 H/D：</p>
+<table>
+<thead>
+<tr class="header">
+<th>维度</th>
+<th>普通布局的 <code>byteStride</code></th>
+<th>Interleave 布局的 <code>byteStride</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>C</td>
+<td><code>elementBytes</code></td>
+<td><code>elementBytes</code></td>
+</tr>
+<tr class="even">
+<td>W</td>
+<td><code>globalStrides[0]</code></td>
+<td><code>interleaveBytes</code></td>
+</tr>
+<tr class="odd">
+<td>H</td>
+<td><code>globalStrides[1]</code></td>
+<td><code>globalStrides[0]</code></td>
+</tr>
+<tr class="even">
+<td>D</td>
+<td><code>globalStrides[2]</code></td>
+<td><code>globalStrides[1]</code></td>
+</tr>
+<tr class="odd">
+<td>Cslice</td>
+<td><code>0</code></td>
+<td><code>globalStrides[rank-3]</code></td>
+</tr>
+<tr class="even">
+<td>N</td>
+<td><code>globalStrides[rank-2]</code></td>
+<td><code>globalStrides[rank-2]</code></td>
+</tr>
+</tbody>
+</table>
+<p>普通布局补入的 Cslice 维度长度为 1，对应的字节跨度设为 0。Interleave 布局中，每个 slice 在 GMEM 中占完整的 16 B 或 32 B，最后一个 slice 通道不足时补零，有效通道数仍为 <code>validChannels</code>。</p>
+<p>有效点的 Global Memory 地址统一为：</p>
+<pre class="ini"><code>globalAddressOfPoint = globalAddress + sum(globalCoord[dim] × byteStride[dim])</code></pre>
+<p>求和覆盖统一后的全部维度，由此得到有效 Im2col 元素的 Global Memory 地址；越界点使用对应的填充值。</p>
+<h3 id="资料来源">2.9 资料来源</h3>
+<ul>
+<li><a href="https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-im2col-mode">PTX ISA：Im2col mode、Traversal Stride 与 Interleave layout</a></li>
+<li><a href="https://docs.nvidia.com/cuda/cuda-driver-api/cuda_driver_api/group__CUDA__TENSOR__MEMORY.html">CUDA Driver API：Tensor Map Object Management</a></li>
+<li><a href="https://patents.google.com/patent/US12499052B2/en">NVIDIA 专利 US12499052B2：Im2col 的起点、偏移和 Bounding Box</a></li>
+</ul>
+<hr />
+<p><a href="index.html">返回系列目录</a> · <a href="04-hardware-design.html">TMA 硬件设计</a> · <a href="references.html">参考资料索引</a></p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-10-30<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/hardware/nvidia-tma/address-generation.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

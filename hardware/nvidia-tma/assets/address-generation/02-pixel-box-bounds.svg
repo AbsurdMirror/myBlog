@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="760" viewBox="0 0 1660 760">
+  <title>Pixel Box 的二维边界：四边扩展、四边收缩和混合</title>
+  <desc>三个场景采用相同的 W 向右、H 向下坐标比例，Global Tensor 为 W 的零到八、H 的零到六左闭右开区间。橙框表示 Pixel Box。左和上由 lower 决定，右和下由 upper 决定。示意固定 im2colOffsets 为零。</desc>
+  <defs>
+    <marker id="axisArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="#7b8994"/></marker>
+    <marker id="moveArrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="#bb773e"/></marker>
+    <g id="tensor">
+      <path d="M104 98H416V358H104Z M130 98V358 M156 98V358 M182 98V358 M208 98V358 M234 98V358 M260 98V358 M286 98V358 M312 98V358 M338 98V358 M364 98V358 M390 98V358 M104 124H416 M104 150H416 M104 176H416 M104 202H416 M104 228H416 M104 254H416 M104 280H416 M104 306H416 M104 332H416" fill="none" stroke="#e7e6df" stroke-width="1"/>
+      <rect x="156" y="150" width="208" height="156" rx="2" fill="#dcebf5" fill-opacity="0.86" stroke="#7a9cb5" stroke-width="2"/>
+      <path d="M83 150H446" fill="none" stroke="#7b8994" stroke-width="1.5" marker-end="url(#axisArrow)"/>
+      <path d="M156 82V393" fill="none" stroke="#7b8994" stroke-width="1.5" marker-end="url(#axisArrow)"/>
+      <text x="452" y="144" class="axislabel">W</text><text x="145" y="411" class="axislabel">H</text>
+      <text x="143" y="138" text-anchor="end" class="tick">0</text><text x="364" y="138" text-anchor="middle" class="tick">8</text><text x="144" y="313" text-anchor="end" class="tick">6</text>
+    </g>
+  </defs>
+  <style>
+    text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#293e4b;font-size:22px}
+    .title{font-size:31px;font-weight:600}.paneltitle{font-size:27px;font-weight:600}.axislabel{font-size:21px;fill:#687b88}.tick{font-size:20px;fill:#647884}.field{font-size:21px}.note{font-size:21px;fill:#637584}.range{font-size:22px;fill:#4a5e6c}.formula{font-family:Consolas,'Microsoft YaHei',monospace;font-size:24px}.box{fill:#f4d7b8;fill-opacity:0.16;stroke:#bb773e;stroke-width:3.5}.move{fill:none;stroke:#bb773e;stroke-width:2.8;marker-end:url(#moveArrow)}
+  </style>
+  <rect width="1660" height="760" rx="22" fill="#fcfbf7"/>
+  <text x="40" y="49" class="title">Pixel Box：四个方向上的扩展与收缩</text>
+  <rect x="40" y="76" width="29" height="19" rx="3" fill="#dcebf5" stroke="#7a9cb5"/><text x="81" y="94" class="note">Global Tensor：W ∈ [0,8)，H ∈ [0,6)</text>
+  <rect x="666" y="76" width="29" height="19" rx="2" fill="none" stroke="#bb773e" stroke-width="3"/><text x="708" y="94" class="note">Pixel Box</text><text x="1120" y="94" class="note">im2colOffsets = 0；三图比例一致</text>
+
+  <g transform="translate(30 142)">
+    <text x="260" y="0" text-anchor="middle" class="paneltitle">四边扩展</text>
+    <use href="#tensor"/>
+    <rect x="104" y="98" width="312" height="260" class="box"/>
+    <path d="M156 228H104" class="move"/><path d="M364 228H416" class="move"/><path d="M260 150V98" class="move"/><path d="M260 306V358" class="move"/>
+    <text x="260" y="67" text-anchor="middle" class="field">上：lowerH = −2</text>
+    <text x="45" y="218" text-anchor="middle" class="field">lowerW</text><text x="45" y="247" text-anchor="middle" class="field">−2</text>
+    <text x="475" y="218" text-anchor="middle" class="field">upperW</text><text x="475" y="247" text-anchor="middle" class="field">+2</text>
+    <text x="260" y="422" text-anchor="middle" class="field">下：upperH = +2</text>
+    <text x="260" y="461" text-anchor="middle" class="range">W：[−2,10)　H：[−2,8)</text>
+  </g>
+
+  <g transform="translate(570 142)">
+    <text x="260" y="0" text-anchor="middle" class="paneltitle">四边收缩</text>
+    <use href="#tensor"/>
+    <rect x="208" y="202" width="104" height="52" class="box"/>
+    <path d="M156 228H208" class="move"/><path d="M364 228H312" class="move"/><path d="M260 150V202" class="move"/><path d="M260 306V254" class="move"/>
+    <text x="260" y="67" text-anchor="middle" class="field">上：lowerH = +2</text>
+    <text x="45" y="218" text-anchor="middle" class="field">lowerW</text><text x="45" y="247" text-anchor="middle" class="field">+2</text>
+    <text x="475" y="218" text-anchor="middle" class="field">upperW</text><text x="475" y="247" text-anchor="middle" class="field">−2</text>
+    <text x="260" y="422" text-anchor="middle" class="field">下：upperH = −2</text>
+    <text x="260" y="461" text-anchor="middle" class="range">W：[2,6)　H：[2,4)</text>
+  </g>
+
+  <g transform="translate(1110 142)">
+    <text x="260" y="0" text-anchor="middle" class="paneltitle">左、下扩展；右、上收缩</text>
+    <use href="#tensor"/>
+    <rect x="104" y="202" width="208" height="156" class="box"/>
+    <path d="M156 228H104" class="move"/><path d="M364 228H312" class="move"/><path d="M260 150V202" class="move"/><path d="M260 306V358" class="move"/>
+    <text x="260" y="67" text-anchor="middle" class="field">上：lowerH = +2</text>
+    <text x="45" y="218" text-anchor="middle" class="field">lowerW</text><text x="45" y="247" text-anchor="middle" class="field">−2</text>
+    <text x="475" y="218" text-anchor="middle" class="field">upperW</text><text x="475" y="247" text-anchor="middle" class="field">−2</text>
+    <text x="260" y="422" text-anchor="middle" class="field">下：upperH = +2</text>
+    <text x="260" y="461" text-anchor="middle" class="range">W：[−2,6)　H：[2,8)</text>
+  </g>
+
+  <path d="M40 635H1620" stroke="#dddcd5" stroke-width="1.4"/>
+  <text x="48" y="680" class="formula">pixelBoxStart[W/H] = lower[W/H]</text>
+  <text x="48" y="722" class="formula">pixelBoxEnd[W/H]   = globalDim[W/H] + upper[W/H]</text>
+  <text x="1230" y="722" class="note">区间均为左闭右开</text>
+</svg>
