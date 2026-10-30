@@ -1,0 +1,31 @@
+{
+  "figures": [
+    {
+      "id": "tma-address-channel-grouping",
+      "file": "01-channel-grouping.svg",
+      "width": 1400,
+      "height": 750,
+      "sha256": "0a9c2a2f929e3b2e7e8416509014a407cf4898cc0d9bb81b845cac6915c99255",
+      "source": "本地绘制，用户采用版",
+      "status": "adopted"
+    },
+    {
+      "id": "tma-address-pixel-box-bounds",
+      "file": "02-pixel-box-bounds.svg",
+      "width": 1660,
+      "height": 760,
+      "sha256": "256c92444ea9798b1ad0f1a48aadab2a74e0448217938dd52f176d2ba76a71e3",
+      "source": "本地绘制，用户采用版",
+      "status": "adopted"
+    },
+    {
+      "id": "tma-address-start-coordinate",
+      "file": "03-start-coordinate.svg",
+      "width": 1400,
+      "height": 630,
+      "sha256": "0490b0ab92aa79a3d21950c0cd0fe74bc5fd5865cce684bb4f404588dbd83bb4",
+      "source": "本地绘制，用户采用版",
+      "status": "adopted"
+    }
+  ]
+}

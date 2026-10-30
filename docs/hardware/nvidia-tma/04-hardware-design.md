@@ -1034,5 +1034,5 @@ Descriptor prefetch 包括软件显式预取和 TMAU 硬件预取。软件通过
 
 ---
 
-[返回系列目录](index.md) · [上一篇：Blackwell 与 Rubin 的 TMA PTX 演进](03-blackwell-rubin-ptx.md) · [参考资料索引](references.md)
+[返回系列目录](index.md) · [上一篇：Blackwell 与 Rubin 的 TMA PTX 演进](03-blackwell-rubin-ptx.md) · [独立文章：TMA 地址生成](address-generation.md) · [参考资料索引](references.md)
 

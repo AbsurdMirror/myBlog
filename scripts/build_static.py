@@ -58,6 +58,7 @@ def main() -> None:
     (output/'_static').mkdir(exist_ok=True)
     for name in ['site.css','viewer.js']:
         shutil.copy2(ROOT/'theme'/name, output/'_static'/name)
+    css_version=hashlib.sha256((ROOT/'theme/site.css').read_bytes()).hexdigest()[:12]
     for rel,meta,markdown in page_info:
         dest_rel=str(Path(rel).with_suffix('.html')).replace('\\','/')
         content=render(markdown)
@@ -81,7 +82,7 @@ def main() -> None:
         badge='<span class="badge">PREVIEW · 预览</span>' if args.preview else ''
         doc_url=REPO+'/blob/main/docs/'+rel
         page=f'''<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{title} · 图解技术笔记</title><link rel="stylesheet" href="{local_link(dest_rel,'_static/site.css')}"></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>{title} · 图解技术笔记</title><link rel="stylesheet" href="{local_link(dest_rel,'_static/site.css')}?v={css_version}"></head>
 <body><header class="topbar"><a class="brand" href="{local_link(dest_rel,'index.html')}">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
 <aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary>{nav}</details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="{doc_url}">本页 Markdown</a> · <a href="{REPO}/tree/main">源码仓库</a></div></aside>
 <main><div class="edition"><span>TECHNICAL NOTES</span>{badge}</div><details class="mobile-nav"><summary>文档目录</summary>{nav}</details><article class="doc">{content}</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · {html.escape(str(meta.get('updated','')))}<br><a href="{doc_url}">查看本页 Markdown</a></footer></main><script src="{local_link(dest_rel,'_static/viewer.js')}"></script></body></html>'''

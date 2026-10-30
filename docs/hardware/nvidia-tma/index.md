@@ -1,7 +1,7 @@
 ---
 title: NVIDIA Tensor Memory Accelerator 调研
 status: published
-updated: 2026-10-29
+updated: 2026-10-30
 ---
 
 # NVIDIA Tensor Memory Accelerator 调研
@@ -17,6 +17,13 @@ updated: 2026-10-29
 | [第三章：Blackwell 与 Rubin 的 TMA PTX 演进](03-blackwell-rubin-ptx.md) | PTX 8.6–9.4 的 CTA-local destination、mask、gather/scatter、target 分化、instruction-time descriptor override 与 cache priority | 已发布 |
 | [第四章：TMA 硬件设计](04-hardware-design.md) | per-SM 服务模型、descriptor cache、请求与响应、mbarrier、Multicast、Group、Reduce 和 descriptor 更新 | 已发布 |
 
+## 独立文章
+
+| 篇目 | 内容 | 状态 |
+|---|---|---|
+| [TMA 地址生成：Tile 与 Im2col](address-generation.md) | 从逻辑 Tensor、Pixel Box 和坐标转换到 OOB 判断与 Global Memory 地址 | 已发布 |
+| NV Swizzle 分析 | 数据重排与地址变换 | 草稿，尚未发布 |
+
 ## 阅读提示
 
 - 第一章覆盖全局路线图，适合先建立产品、Compute Capability、PTX 版本和 target 之间的关系。
@@ -28,5 +35,5 @@ updated: 2026-10-29
 
 ## 当前范围
 
-当前发布包含 4 篇正文、30 张配图与一份精简参考资料索引。第四章的专利与逆向资料在相关段落直接链接，便于对照原始内容。
+当前发布包含 4 篇章节正文、1 篇独立文章、33 张配图与一份精简参考资料索引。第四章和地址生成文章在正文中链接原始资料，便于对照。
 
