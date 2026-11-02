@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "4aa4973c1816af01602b5eea07e1798a68707327",
-  "built_utc": "2026-11-02T03:11:28.780040+00:00",
+  "source_commit": "deac9d8b18b409efb92c08283ecde8e5f5416d37",
+  "built_utc": "2026-11-02T06:07:33.251785+00:00",
   "pages": [
     "index.html",
     "hardware/nvidia-tma/index.html",
@@ -253,8 +253,8 @@
       "bytes": 10498
     },
     "models/deepseek-v4.1-flash/03-layer1.html": {
-      "sha256": "267487c0b10b1cd31e6ff3ecbf74aed432fd21f0e65f72cd0ad9ca383f943d53",
-      "bytes": 116920
+      "sha256": "25cde77ab24b9fe4b29389fd24e56ecadd6eb202b7c7e5dd599780d9aadad312",
+      "bytes": 116992
     },
     "models/deepseek-v4.1-flash/02-layer0.html": {
       "sha256": "8826ed1bafc17a462fac2b222af6b6875e2075ab61df5212de56f90dde5cc6a3",
@@ -273,8 +273,8 @@
       "bytes": 1883417
     },
     "models/deepseek-v4.1-flash/assets/13_layer1_engram_lookup.png": {
-      "sha256": "ae4b934b8130bce4bd7eec31aa5916f22b16f1c84b53b492ca15d566ab152b17",
-      "bytes": 1363071
+      "sha256": "9fa88df0777843159dc0e8c0ef0e0417a5d23b034977ab703981fc321f09789c",
+      "bytes": 164036
     },
     "models/deepseek-v4.1-flash/assets/06_swa_q_kv_window.png": {
       "sha256": "441d7056f8282de984097a45b0c0577c3d4b2c9c8f9009d342c860d9284215bf",
