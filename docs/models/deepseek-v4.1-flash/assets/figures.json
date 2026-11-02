@@ -236,6 +236,28 @@
       }
     },
     {
+      "id": "layer1-overview",
+      "file": "15_layer1_overview.png",
+      "sha256": "d943ac465756141b0212075597e20353fdfa0a3cdceba60051edf7e41aecd3db",
+      "bytes": 207156,
+      "width": 2422,
+      "height": 1884,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "前置Engram更新四路残差，不修改传入pre_next；本层Attention入口使用Layer0的动态pre_next。",
+        "Attention生成的attn_pre用于本层MoE，MoE生成的ffn_pre作为下一层pre_next。",
+        "粗线表示四路残差集合的公共干线，矩阵单路支线及系数线保持细线；底部attn_pre路径与H分发带相交但不相连。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer1_overview.py",
+        "source_sha256": "d5be3fd6c3c94dcbd21b8f768bb3afad3b7348a2444d604702ef90a80d33792f",
+        "article_figure": 1,
+        "updated": "2026-11-02"
+      }
+    },
+    {
       "id": "layer1-01",
       "file": "13_layer1_engram_lookup.png",
       "sha256": "9fa88df0777843159dc0e8c0ef0e0417a5d23b034977ab703981fc321f09789c",
@@ -252,7 +274,7 @@
         "tool": "tensor-python-api",
         "source": "examples/layer1_engram_lookup.py",
         "source_sha256": "d61eb7bb99e27e4e1fb9628741610d65a47ff6480745bfc8d40aaa94c797f138",
-        "article_figure": 1,
+        "article_figure": 2,
         "updated": "2026-11-02"
       }
     },
@@ -274,7 +296,7 @@
         "tool": "tensor-python-api",
         "source": "examples/layer1_engram_computation.py",
         "source_sha256": "03441151ada676cce32ac7ab60568810d16758f779ee60ed1cd2d80d26adfc95",
-        "article_figure": 2,
+        "article_figure": 3,
         "updated": "2026-11-02"
       }
     }

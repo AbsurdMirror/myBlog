@@ -38,6 +38,10 @@ $$
 }
 $$
 
+![图 1：Layer 1 整层总览：前置 Engram 与动态跨层 pre](assets/15_layer1_overview.png)
+
+图 1 左列的 Attention 路径自上向下，右列的 MoE 路径自下向上。Engram 先更新四路残差，Layer 0 传入的 `pre_next` 则绕过 Engram，直接用于 Attention 入口汇聚。Attention 生成的 `attn_pre` 交给本层 MoE，MoE 生成的 `ffn_pre` 作为下一层的 `pre_next`。粗线表示四路残差的整体传递，细线表示单路数据或系数传递。
+
 逐步对照如下。“结构相同”只表示算子、shape 和执行顺序与 Layer 0 相同；Layer 1 拥有自己的参数，输入数值也已经被 Engram 改变，并不与 Layer 0 共享权重或计算结果。
 
 | 步骤 | 相对 Layer 0 | Layer 1 的行为 |
@@ -60,9 +64,9 @@ $$
 
 ### 2.1 从 Token 到 24 个查表结果
 
-![图 1：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表](assets/13_layer1_engram_lookup.png)
+![图 2：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表](assets/13_layer1_engram_lookup.png)
 
-图 1 从左到右依次经过 Token 压缩、历史补齐、$N$-gram Hash、分区寻址和参数表查找。图中的蓝色块表示数据张量，黄色块表示辅助输入、固定 buffer 或模型参数，绿色块表示计算步骤。其中 `T_mask` 是用于区分文本与图像位置的 BOOL mask。
+图 2 从左到右依次经过 Token 压缩、历史补齐、$N$-gram Hash、分区寻址和参数表查找。图中的蓝色块表示数据张量，黄色块表示辅助输入、固定 buffer 或模型参数，绿色块表示计算步骤。其中 `T_mask` 是用于区分文本与图像位置的 BOOL mask。
 
 主要对象如下：
 
@@ -194,7 +198,7 @@ E_{\mathrm{flat}}:[B,S,6144]
 6144=3\times8\times256.
 $$
 
-至此，图 1 的输出已经包含当前 token 对应的 24 份局部短语记忆。这里的“24 次查表”是逻辑行读取口径；固定 revision 的官方推理实现会分别读取 FP8 数据与对应 scale，不能直接把逻辑行数等同于底层访存指令数。
+至此，图 2 的输出已经包含当前 token 对应的 24 份局部短语记忆。这里的“24 次查表”是逻辑行读取口径；固定 revision 的官方推理实现会分别读取 FP8 数据与对应 scale，不能直接把逻辑行数等同于底层访存指令数。
 
 在官方推理实现中，模型会在进入各层循环之前，同时生成 Layer 1 和 Layer 14 所需的 Hash 地址：
 
@@ -202,19 +206,19 @@ $$
 I_{\mathrm{all}}:[B,S,2,24].
 $$
 
-执行 Layer 1 时只取第一个切片 $I_{\mathrm{all}}[:,:,0,:]$。图 1 为了说明 Layer 1 的算子数据流，只画出了这个 $[B,S,24]$ 切片。
+执行 Layer 1 时只取第一个切片 $I_{\mathrm{all}}[:,:,0,:]$。图 2 为了说明 Layer 1 的算子数据流，只画出了这个 $[B,S,24]$ 切片。
 
 ### 2.2 从查表结果到四路残差写回
 
-![图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回](assets/14_layer1_engram_computation.png)
+![图 3：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回](assets/14_layer1_engram_computation.png)
 
-图 2 接续图 1 的输出 $E_{\mathrm{flat}}$。查表结果先投影为四路 Key 和一份共享 Value，再与四路残差分别计算 Gate，最后把同一份 Value 按不同幅度写回四路。
+图 3 接续图 2 的输出 $E_{\mathrm{flat}}$。查表结果先投影为四路 Key 和一份共享 Value，再与四路残差分别计算 Gate，最后把同一份 Value 按不同幅度写回四路。
 
 主要输入和参数如下：
 
 | 对象 | Shape | 含义 |
 |---|---|---|
-| $E_{\mathrm{flat}}$ | $[B,S,6144]$ | 图 1 得到的 24 行查表结果 |
+| $E_{\mathrm{flat}}$ | $[B,S,6144]$ | 图 2 得到的 24 行查表结果 |
 | $X$ | $[B,S,4,5120]$ | Layer 0 输出的四路残差 |
 | $W_E$ | $[25600,6144]$ | 生成 Key 和 Value 的投影权重，无 bias |
 | $W_Q,W_K$ | 各为 $[4,5120]$ | 四路 Gate 使用的逐维缩放参数 |
@@ -333,7 +337,7 @@ g_{b,t,c},&T_{\mathrm{mask},b,t}=1,\\
 \end{cases}
 $$
 
-图 2 用 `mask(sigmoid)` 合并表达这两步：先计算 Sigmoid，再应用文本位置 mask，将图像位置的 Gate 置零。
+图 3 用 `mask(sigmoid)` 合并表达这两步：先计算 Sigmoid，再应用文本位置 mask，将图像位置的 Gate 置零。
 
 #### 把共享 Value 写回四路残差
 
