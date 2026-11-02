@@ -1,0 +1,2 @@
+# Preserve adopted SVG bytes so figure checksums remain stable across platforms.
+*.svg -text
