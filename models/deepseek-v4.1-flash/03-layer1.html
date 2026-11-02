@@ -251,7 +251,7 @@ I_{\mathrm{all}}:[B,S,2,24].
 </annotation></semantics></math></p>
 <p>执行 Layer 1 时只取第一个切片 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">[</mo><mo>:</mo><mo>,</mo><mo>:</mo><mo>,</mo><mn>0</mn><mo>,</mo><mo>:</mo><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">I_{\mathrm{all}}[:,:,0,:]</annotation></semantics></math>。图 1 为了说明 Layer 1 的算子数据流，只画出了这个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>24</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B,S,24]</annotation></semantics></math> 切片。</p>
 <h3 id="从查表结果到四路残差写回">2.2 从查表结果到四路残差写回</h3>
-<p><img src="assets/14_layer1_engram_computation.png?v=08d4de8a051b" alt="图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回" /></p>
+<p><img src="assets/14_layer1_engram_computation.png?v=f37920efc6a8" alt="图 2：Layer 1 Engram 的 KV 投影、四路 Gate 与残差写回" /></p>
 <p>图 2 接续图 1 的输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">E_{\mathrm{flat}}</annotation></semantics></math>。查表结果先投影为四路 Key 和一份共享 Value，再与四路残差分别计算 Gate，最后把同一份 Value 按不同幅度写回四路。</p>
 <p>主要输入和参数如下：</p>
 <table>
@@ -382,7 +382,7 @@ g_{b,t,c},&amp;T_{\mathrm{mask},b,t}=1,\\
 0,&amp;T_{\mathrm{mask},b,t}=0.
 \end{cases}
 </annotation></semantics></math></p>
-<p>图 2 为了压缩画面，把 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow></msub><annotation encoding="application/x-tex">T_{\mathrm{mask}}</annotation></semantics></math> 的箭头画在 Sigmoid 附近；源码执行顺序是先计算 Sigmoid，再应用 mask。</p>
+<p>图 2 用 <code>mask(sigmoid)</code> 合并表达这两步：先计算 Sigmoid，再应用文本位置 mask，将图像位置的 Gate 置零。</p>
 <h4 id="把共享-value-写回四路残差">把共享 Value 写回四路残差</h4>
 <p>同一个 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>E</mi></msub><annotation encoding="application/x-tex">V_E</annotation></semantics></math> 广播到四路，每一路使用自己的 Gate：</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><menclose notation="box"><mrow><msub><mi>Y</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>=</mo><msub><mi>X</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>+</mo><msub><mi>g</mi><mrow><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>c</mi></mrow></msub><msub><mi>V</mi><mrow><mi>E</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>t</mi><mo>,</mo><mi>d</mi></mrow></msub></mrow></menclose><mo>,</mo></mrow><annotation encoding="application/x-tex">
