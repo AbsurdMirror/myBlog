@@ -333,7 +333,7 @@ g_{b,t,c},&T_{\mathrm{mask},b,t}=1,\\
 \end{cases}
 $$
 
-图 2 为了压缩画面，把 $T_{\mathrm{mask}}$ 的箭头画在 Sigmoid 附近；源码执行顺序是先计算 Sigmoid，再应用 mask。
+图 2 用 `mask(sigmoid)` 合并表达这两步：先计算 Sigmoid，再应用文本位置 mask，将图像位置的 Gate 置零。
 
 #### 把共享 Value 写回四路残差
 

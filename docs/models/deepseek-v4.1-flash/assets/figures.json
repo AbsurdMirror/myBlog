@@ -259,16 +259,24 @@
     {
       "id": "layer1-02",
       "file": "14_layer1_engram_computation.png",
-      "sha256": "08d4de8a051b52535654031876b9defa636481541d6478061519f5f7d68f50be",
-      "bytes": 1244510,
-      "width": 1672,
-      "height": 941,
-      "selection": "user-supplied",
+      "sha256": "f37920efc6a8a1d3af1ebb5a65ac313773931a3879e2cfe1f2f43528d37c4ff5",
+      "bytes": 131809,
+      "width": 3574,
+      "height": 1488,
+      "selection": "user-approved-python-api",
       "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "源码顺序为先Sigmoid再用token mask把图像位置的gate置零；图中在Sigmoid附近合并表达。",
-        "四路共享同一个Value，但每路Key与gate独立。"
-      ]
+        "mask(sigmoid)合并表达先Sigmoid、再用token mask将图像位置gate置零的顺序。",
+        "四路共享同一个Value，但每路Key与gate独立。",
+        "F内部虚线按20480+5120划分；左侧Key从底边2/5处出线，右侧Value从顶边9/10处出线。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer1_engram_computation.py",
+        "source_sha256": "03441151ada676cce32ac7ab60568810d16758f779ee60ed1cd2d80d26adfc95",
+        "article_figure": 2,
+        "updated": "2026-11-02"
+      }
     }
   ]
 }
