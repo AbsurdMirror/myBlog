@@ -1,7 +1,7 @@
 ---
 title: Layer 1：从 Engram 写入到局部注意力与 MoE
 status: published
-updated: 2026-10-20
+updated: 2026-11-02
 ---
 
 # Layer 1：从 Engram 写入到局部注意力与 MoE
@@ -62,7 +62,7 @@ $$
 
 ![图 1：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表](assets/13_layer1_engram_lookup.png)
 
-图 1 从左到右依次经过 Token 压缩、历史补齐、$N$-gram Hash、分区寻址和参数表查找。图中的蓝色块表示随 batch 和序列变化的张量，黄色块表示固定 buffer 或模型参数，绿色块表示计算步骤。
+图 1 从左到右依次经过 Token 压缩、历史补齐、$N$-gram Hash、分区寻址和参数表查找。图中的蓝色块表示数据张量，黄色块表示辅助输入、固定 buffer 或模型参数，绿色块表示计算步骤。其中 `T_mask` 是用于区分文本与图像位置的 BOOL mask。
 
 主要对象如下：
 

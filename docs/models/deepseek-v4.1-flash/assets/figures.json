@@ -238,16 +238,23 @@
     {
       "id": "layer1-01",
       "file": "13_layer1_engram_lookup.png",
-      "sha256": "ae4b934b8130bce4bd7eec31aa5916f22b16f1c84b53b492ca15d566ab152b17",
-      "bytes": 1363071,
-      "width": 1672,
-      "height": 941,
-      "selection": "user-supplied",
+      "sha256": "9fa88df0777843159dc0e8c0ef0e0417a5d23b034977ab703981fc321f09789c",
+      "bytes": 164036,
+      "width": 2976,
+      "height": 1139,
+      "selection": "user-approved-python-api",
       "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "G0表示当前token，G1至G3依次回看历史；mask/pad/shift还读取图中未单独画出的token有效性mask。",
+        "G0表示当前token，G1至G3依次回看历史；T_mask为文本/图像位置有效性的BOOL输入。",
         "图中24张逻辑表在参数存储上是同一张大表的24个互不重叠区间。"
-      ]
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer1_engram_lookup.py",
+        "source_sha256": "d61eb7bb99e27e4e1fb9628741610d65a47ff6480745bfc8d40aaa94c797f138",
+        "article_figure": 1,
+        "updated": "2026-11-02"
+      }
     },
     {
       "id": "layer1-02",
