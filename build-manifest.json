@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "7fd0c50c9917ac33ef1f810a08fefd5091214bf4",
-  "built_utc": "2026-10-30T10:45:53.010668+00:00",
+  "source_commit": "4aa4973c1816af01602b5eea07e1798a68707327",
+  "built_utc": "2026-11-02T03:11:28.780040+00:00",
   "pages": [
     "index.html",
     "hardware/nvidia-tma/index.html",
@@ -11,6 +11,7 @@
     "hardware/nvidia-tma/03-blackwell-rubin-ptx.html",
     "hardware/nvidia-tma/04-hardware-design.html",
     "hardware/nvidia-tma/address-generation.html",
+    "hardware/nvidia-tma/swizzle.html",
     "hardware/nvidia-tma/references.html",
     "models/deepseek-v4.1-flash/index.html",
     "models/deepseek-v4.1-flash/02-layer0.html",
@@ -24,8 +25,8 @@
       "bytes": 0
     },
     "index.html": {
-      "sha256": "b28a147e1c2d3cc65c80080e6d70c5a99d87f5b9148fe8ce09332a0e6ffbaaf3",
-      "bytes": 5187
+      "sha256": "4371acb70ad1974f962b90c1b629b7ac0eb98f20acdd3c4577db5d4191f89399",
+      "bytes": 5505
     },
     "404.html": {
       "sha256": "146d6ae69b10385fdadbc5a55a5b55115c13d6a40a05728b2bad212572d13ae2",
@@ -68,32 +69,36 @@
       "bytes": 4125
     },
     "hardware/nvidia-tma/02-hopper-ptx.html": {
-      "sha256": "e9a5348cd60932077fc8ca34cb97cbc66c9cec99d1cee441e0ab2983b3a0d0c8",
-      "bytes": 56358
+      "sha256": "ba0c492a53a25b84297f2dd343b9399a1706ff635aaf97d3c1c8eaf9b11ae97b",
+      "bytes": 56454
     },
     "hardware/nvidia-tma/03-blackwell-rubin-ptx.html": {
-      "sha256": "2bf7b06a990b2e2ea0d1afad67a6420afbd7fcb58bcd03772f106b1ada82d50a",
-      "bytes": 86242
+      "sha256": "b4ae31ec499014d45e8b3bab86b859af40ac2efca96cbbc1beac42e1a44807f2",
+      "bytes": 86338
     },
     "hardware/nvidia-tma/01-overview.html": {
-      "sha256": "f96e6e3cf2a248d433492c402e64020e3ae47ffd8537555bc0a5f40e9c2a0162",
-      "bytes": 35767
+      "sha256": "d5f5ed2f80319ccd08a67172a7db5c0fea6818c125acefe322ffa42c8e102e80",
+      "bytes": 35863
+    },
+    "hardware/nvidia-tma/swizzle.html": {
+      "sha256": "ab4015b7140802b8272f2b98dda8fe0c805a551bb400cbe4447819aecc36d4ab",
+      "bytes": 19234
     },
     "hardware/nvidia-tma/04-hardware-design.html": {
-      "sha256": "dadf0ad11046642f4e367bfbd7365eceafa3cdd27da93bf1d630101eeb69e763",
-      "bytes": 86750
+      "sha256": "c00fb73acf9d976dcd637b0275b17e43e860a127538588fcfeadd6e1aac20352",
+      "bytes": 86846
     },
     "hardware/nvidia-tma/references.html": {
-      "sha256": "7cc735d62a3119a1be38fa592fc93a04288315d814165a28538f83a0df67b2f5",
-      "bytes": 11570
+      "sha256": "1696fc0b3e85bfd7f98e79c672d548eabd3ef84f3d7aeb3f21266d68d22a1343",
+      "bytes": 11666
     },
     "hardware/nvidia-tma/address-generation.html": {
-      "sha256": "2b43afce3b5878d3b91488995f4e327c37b638b0c124abb02f2bda46c915504a",
-      "bytes": 22729
+      "sha256": "6446c8831b58661f3cb3ad407d114f2138b90e63a9afb2d478077ed5d33af374",
+      "bytes": 22825
     },
     "hardware/nvidia-tma/index.html": {
-      "sha256": "31fc68a3ea097bf590a729d6a1ec0107d5f1ad49bb44649b4d79722b9d7f0398",
-      "bytes": 6933
+      "sha256": "e0ab819472eb3fcaffd71d2f1adfbf2e74e9cdd62f212973eef2534f473616cb",
+      "bytes": 7097
     },
     "hardware/nvidia-tma/assets/17-tma-copy-directions.png": {
       "sha256": "94a23c5caca24d2b8f8179799ff28734e48f85ca5ed2cf96d1e953bc1490b51b",
@@ -215,6 +220,18 @@
       "sha256": "ca6f434727766a644358450e4749141076f60a8b82cb274d0ef3e780afbcf13a",
       "bytes": 228908
     },
+    "hardware/nvidia-tma/assets/swizzle/02-layered-exchange-xor.svg": {
+      "sha256": "059339b7311282cdc04ecc9a1c48a7839b13f0b8f600ed979d4549a63d90198a",
+      "bytes": 23255
+    },
+    "hardware/nvidia-tma/assets/swizzle/01-layout-comparison.svg": {
+      "sha256": "394593be5719a305cbd4ea7ebc39e4d6491f6271cbd7752c6fd360eed72afbff",
+      "bytes": 50996
+    },
+    "hardware/nvidia-tma/assets/swizzle/03-nvidia-swizzle-patterns.png": {
+      "sha256": "28683f8818a056c5f2df9b313345cc6d77d316f044af6cb184cb4bcc3badf2bc",
+      "bytes": 55210
+    },
     "hardware/nvidia-tma/assets/address-generation/03-start-coordinate.svg": {
       "sha256": "0490b0ab92aa79a3d21950c0cd0fe74bc5fd5865cce684bb4f404588dbd83bb4",
       "bytes": 4424
@@ -236,16 +253,16 @@
       "bytes": 10498
     },
     "models/deepseek-v4.1-flash/03-layer1.html": {
-      "sha256": "5b7b25f58ab296e3ca907e3ca9409844ed081dec1d189345663f60a758fa7920",
-      "bytes": 116772
+      "sha256": "267487c0b10b1cd31e6ff3ecbf74aed432fd21f0e65f72cd0ad9ca383f943d53",
+      "bytes": 116920
     },
     "models/deepseek-v4.1-flash/02-layer0.html": {
-      "sha256": "24eda162b43c35fbf7f3c133712a21ca9e02d6311bae645cfb7882a650c1c3d0",
-      "bytes": 250839
+      "sha256": "8826ed1bafc17a462fac2b222af6b6875e2075ab61df5212de56f90dde5cc6a3",
+      "bytes": 250987
     },
     "models/deepseek-v4.1-flash/index.html": {
-      "sha256": "9239765f0e7c8778347e72c2870780140fccdae18dca7b101ea91f7571eb8fe8",
-      "bytes": 8263
+      "sha256": "60b9e54a6debe05cb2410c7ae872a055d06bd6b08cc98135859e44a9e3e95e90",
+      "bytes": 8411
     },
     "models/deepseek-v4.1-flash/assets/14_layer1_engram_computation.png": {
       "sha256": "08d4de8a051b52535654031876b9defa636481541d6478061519f5f7d68f50be",
@@ -328,8 +345,8 @@
       "bytes": 10511
     },
     "legacy/index.html": {
-      "sha256": "9ff9a89242f6eec63a200eebb9c7e0add791157951ab65d10098de94d415a8f0",
-      "bytes": 4328
+      "sha256": "fd7414564a19027f2bbb817ffdb238984a70f2d9267a27ac93c9d7a86b1aa679",
+      "bytes": 4470
     },
     "tags/教程/index.html": {
       "sha256": "95b8a3078e4388b69d7b4eab478582896ca2c78796731a678109f3a50f9bc42b",
