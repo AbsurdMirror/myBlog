@@ -1,0 +1,34 @@
+{
+  "figures": [
+    {
+      "id": "swizzle-01-layout-comparison",
+      "file": "01-layout-comparison.svg",
+      "width": 1530,
+      "height": 1090,
+      "sha256": "394593be5719a305cbd4ea7ebc39e4d6491f6271cbd7752c6fd360eed72afbff",
+      "source": "本地绘制，用户采用版",
+      "status": "adopted",
+      "known_issues": []
+    },
+    {
+      "id": "swizzle-02-layered-exchange-xor",
+      "file": "02-layered-exchange-xor.svg",
+      "width": 1280,
+      "height": 1050,
+      "sha256": "059339b7311282cdc04ecc9a1c48a7839b13f0b8f600ed979d4549a63d90198a",
+      "source": "本地绘制，用户采用版",
+      "status": "adopted",
+      "known_issues": []
+    },
+    {
+      "id": "swizzle-03-nvidia-swizzle-patterns",
+      "file": "03-nvidia-swizzle-patterns.png",
+      "width": 1598,
+      "height": 468,
+      "sha256": "28683f8818a056c5f2df9b313345cc6d77d316f044af6cb184cb4bcc3badf2bc",
+      "source": "https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/async-copies.html#shared-memory-bank-swizzling",
+      "status": "adopted",
+      "known_issues": []
+    }
+  ]
+}

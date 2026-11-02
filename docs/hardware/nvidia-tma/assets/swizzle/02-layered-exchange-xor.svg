@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1050" viewBox="0 0 1280 1050" role="img" aria-labelledby="title desc">
+<title id="title">分层交换如何成为 XOR</title><desc id="desc">三种交换分别翻转 atom 编号的 bit 0、bit 1、bit 2。row 3 的 011 选择前两层，使位置 6 经 7 到达 5；地址仅将 atomid 与 rowid 异或。</desc><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 1 L7 4 L0 7" fill="none" stroke="#8a9aab" stroke-width="1.5"/></marker></defs>
+<rect x="0" y="0" width="1280" height="1050" rx="0" fill="#fbfcfe" stroke="#fbfcfe" stroke-width="1"/>
+<text x="48" y="55" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="30" font-weight="600" fill="#26364a" text-anchor="start">分层交换 → 按位翻转 → XOR</text>
+<text x="48" y="89" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="400" fill="#64748b" text-anchor="start">128 B Swizzle · 16 B Atomicity · 每行 8 个 atom</text>
+<text x="48" y="133" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="600" fill="#26364a" text-anchor="start">① 三个交换层级</text>
+<rect x="48" y="154" width="378" height="300" rx="12" fill="#fff" stroke="#dbe3e8" stroke-width="1"/>
+<text x="70" y="190" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="600" fill="#26364a" text-anchor="start">交换 16 B 块</text>
+<text x="70" y="219" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#64748b" text-anchor="start">每 32 B 内</text>
+<text x="404" y="219" font-family="Consolas, monospace" font-size="18" font-weight="400" fill="#26364a" text-anchor="end">bit 0</text>
+<text x="70" y="249" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="400" fill="#64748b" text-anchor="start">原排列</text>
+<text x="70" y="370" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="400" fill="#64748b" text-anchor="start">重排后</text>
+<rect x="93" y="260" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="109" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">0</text>
+<rect x="93" y="380" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="109" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">1</text>
+<rect x="129" y="260" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="145" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">1</text>
+<rect x="129" y="380" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="145" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">0</text>
+<rect x="165" y="260" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="181" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">2</text>
+<rect x="165" y="380" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="181" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">3</text>
+<rect x="201" y="260" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="217" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">3</text>
+<rect x="201" y="380" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="217" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">2</text>
+<rect x="237" y="260" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="253" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">4</text>
+<rect x="237" y="380" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="253" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">5</text>
+<rect x="273" y="260" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="289" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">5</text>
+<rect x="273" y="380" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="289" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">4</text>
+<rect x="309" y="260" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="325" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">6</text>
+<rect x="309" y="380" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="325" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">7</text>
+<rect x="345" y="260" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="361" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">7</text>
+<rect x="345" y="380" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="361" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">6</text>
+<path d="M 109.0 304 C 109.0 323 145.0 326 145.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 145.0 304 C 145.0 323 109.0 326 109.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 181.0 304 C 181.0 323 217.0 326 217.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 217.0 304 C 217.0 323 181.0 326 181.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 253.0 304 C 253.0 323 289.0 326 289.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 289.0 304 C 289.0 323 253.0 326 253.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 325.0 304 C 325.0 323 361.0 326 361.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 361.0 304 C 361.0 323 325.0 326 325.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="237" y="442" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#52657a" text-anchor="middle">位置编号翻转 bit 0</text>
+<rect x="451" y="154" width="378" height="300" rx="12" fill="#fff" stroke="#dbe3e8" stroke-width="1"/>
+<text x="473" y="190" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="600" fill="#26364a" text-anchor="start">交换 32 B 组</text>
+<text x="473" y="219" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#64748b" text-anchor="start">每 64 B 内</text>
+<text x="807" y="219" font-family="Consolas, monospace" font-size="18" font-weight="400" fill="#26364a" text-anchor="end">bit 1</text>
+<text x="473" y="249" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="400" fill="#64748b" text-anchor="start">原排列</text>
+<text x="473" y="370" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="400" fill="#64748b" text-anchor="start">重排后</text>
+<rect x="496" y="260" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="512" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">0</text>
+<rect x="496" y="380" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="512" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">2</text>
+<rect x="532" y="260" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="548" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">1</text>
+<rect x="532" y="380" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="548" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">3</text>
+<rect x="568" y="260" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="584" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">2</text>
+<rect x="568" y="380" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="584" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">0</text>
+<rect x="604" y="260" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="620" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">3</text>
+<rect x="604" y="380" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="620" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">1</text>
+<rect x="640" y="260" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="656" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">4</text>
+<rect x="640" y="380" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="656" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">6</text>
+<rect x="676" y="260" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="692" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">5</text>
+<rect x="676" y="380" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="692" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">7</text>
+<rect x="712" y="260" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="728" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">6</text>
+<rect x="712" y="380" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="728" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">4</text>
+<rect x="748" y="260" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="764" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">7</text>
+<rect x="748" y="380" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="764" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">5</text>
+<path d="M 530.0 304 C 530.0 323 602.0 326 602.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 602.0 304 C 602.0 323 530.0 326 530.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 674.0 304 C 674.0 323 746.0 326 746.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 746.0 304 C 746.0 323 674.0 326 674.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="640" y="442" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#52657a" text-anchor="middle">位置编号翻转 bit 1</text>
+<rect x="854" y="154" width="378" height="300" rx="12" fill="#fff" stroke="#dbe3e8" stroke-width="1"/>
+<text x="876" y="190" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="600" fill="#26364a" text-anchor="start">交换 64 B 组</text>
+<text x="876" y="219" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#64748b" text-anchor="start">每 128 B 内</text>
+<text x="1210" y="219" font-family="Consolas, monospace" font-size="18" font-weight="400" fill="#26364a" text-anchor="end">bit 2</text>
+<text x="876" y="249" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="400" fill="#64748b" text-anchor="start">原排列</text>
+<text x="876" y="370" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="14" font-weight="400" fill="#64748b" text-anchor="start">重排后</text>
+<rect x="899" y="260" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="915" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">0</text>
+<rect x="899" y="380" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="915" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">4</text>
+<rect x="935" y="260" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="951" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">1</text>
+<rect x="935" y="380" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="951" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">5</text>
+<rect x="971" y="260" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="987" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">2</text>
+<rect x="971" y="380" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="987" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">6</text>
+<rect x="1007" y="260" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1023" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">3</text>
+<rect x="1007" y="380" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1023" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">7</text>
+<rect x="1043" y="260" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1059" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">4</text>
+<rect x="1043" y="380" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1059" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">0</text>
+<rect x="1079" y="260" width="32" height="37" rx="4" fill="#fcebdc" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1095" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">5</text>
+<rect x="1079" y="380" width="32" height="37" rx="4" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1095" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">1</text>
+<rect x="1115" y="260" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1131" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">6</text>
+<rect x="1115" y="380" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1131" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">2</text>
+<rect x="1151" y="260" width="32" height="37" rx="4" fill="#eee7f8" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1167" y="286" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">7</text>
+<rect x="1151" y="380" width="32" height="37" rx="4" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1167" y="406" font-family="Consolas, monospace" font-size="21" font-weight="400" fill="#26364a" text-anchor="middle">3</text>
+<path d="M 969.0 304 C 969.0 323 1113.0 326 1113.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M 1113.0 304 C 1113.0 323 969.0 326 969.0 347" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1043" y="442" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#52657a" text-anchor="middle">位置编号翻转 bit 2</text>
+<text x="48" y="490" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="600" fill="#26364a" text-anchor="start">② 行号选择要执行的层级</text>
+<rect x="48" y="510" width="1184" height="228" rx="12" fill="#f2f6fb" stroke="#dbe5ef" stroke-width="1"/>
+<text x="72" y="549" font-family="Consolas, monospace" font-size="24" font-weight="600" fill="#26364a" text-anchor="start">row = 3 = 0 1 1</text>
+<text x="72" y="580" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#64748b" text-anchor="start">bit 2：不交换</text>
+<text x="72" y="610" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#3e8065" text-anchor="start">bit 1：交换 32 B 组</text>
+<text x="72" y="640" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#386f9c" text-anchor="start">bit 0：交换 16 B 块</text>
+<rect x="450" y="546" width="154" height="102" rx="12" fill="#fff" stroke="#c6d4e3" stroke-width="1"/>
+<text x="527" y="582" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="600" fill="#26364a" text-anchor="middle">位置 6</text>
+<text x="527" y="626" font-family="Consolas, monospace" font-size="31" font-weight="400" fill="#26364a" text-anchor="middle">110</text>
+<rect x="720" y="546" width="154" height="102" rx="12" fill="#fff" stroke="#c6d4e3" stroke-width="1"/>
+<text x="797" y="582" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="600" fill="#26364a" text-anchor="middle">位置 7</text>
+<text x="797" y="626" font-family="Consolas, monospace" font-size="31" font-weight="400" fill="#26364a" text-anchor="middle">111</text>
+<rect x="990" y="546" width="154" height="102" rx="12" fill="#fff" stroke="#c6d4e3" stroke-width="1"/>
+<text x="1067" y="582" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="600" fill="#26364a" text-anchor="middle">位置 5</text>
+<text x="1067" y="626" font-family="Consolas, monospace" font-size="31" font-weight="400" fill="#26364a" text-anchor="middle">101</text>
+<path d="M 618 596 L 704 596" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="661" y="570" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="16" font-weight="400" fill="#386f9c" text-anchor="middle">翻转 bit 0</text>
+<path d="M 888 596 L 974 596" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="931" y="570" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="16" font-weight="400" fill="#3e8065" text-anchor="middle">翻转 bit 1</text>
+<text x="810" y="702" font-family="Consolas, monospace" font-size="24" font-weight="600" fill="#26364a" text-anchor="middle">110 XOR 011 = 101    即 6 → 5</text>
+<text x="48" y="784" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="600" fill="#26364a" text-anchor="start">③ 直接变换 Shared Memory 地址位</text>
+<rect x="48" y="807" width="280" height="91" rx="0" fill="#f0f2f5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="188.0" y="838" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#26364a" text-anchor="middle">高位不变</text>
+<text x="188.0" y="878" font-family="Consolas, monospace" font-size="23" font-weight="400" fill="#26364a" text-anchor="middle">addr[…:10]</text>
+<rect x="328" y="807" width="280" height="91" rx="0" fill="#e7f2e5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="468.0" y="838" font-family="Consolas, monospace" font-size="17" font-weight="400" fill="#26364a" text-anchor="middle">rowid = addr[9:7]</text>
+<text x="468.0" y="878" font-family="Consolas, monospace" font-size="23" font-weight="400" fill="#26364a" text-anchor="middle">011</text>
+<rect x="608" y="807" width="280" height="91" rx="0" fill="#e1eff9" stroke="#dbe3e8" stroke-width="1"/>
+<text x="748.0" y="838" font-family="Consolas, monospace" font-size="17" font-weight="400" fill="#26364a" text-anchor="middle">atomid = addr[6:4]</text>
+<text x="748.0" y="878" font-family="Consolas, monospace" font-size="23" font-weight="400" fill="#26364a" text-anchor="middle">110 → 101</text>
+<rect x="888" y="807" width="344" height="91" rx="0" fill="#f0f2f5" stroke="#dbe3e8" stroke-width="1"/>
+<text x="1060.0" y="838" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="17" font-weight="400" fill="#26364a" text-anchor="middle">字节偏移 addr[3:0]</text>
+<text x="1060.0" y="878" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="400" fill="#26364a" text-anchor="middle">保持不变</text>
+<path d="M 468 905 L 468 935 L 748 935 L 748 905" fill="none" stroke="#8a9aab" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="526" y="920" width="163" height="31" rx="0" fill="#fbfcfe" stroke="#fbfcfe" stroke-width="1"/>
+<text x="607" y="943" font-family="Consolas, monospace" font-size="21" font-weight="600" fill="#26364a" text-anchor="middle">XOR</text>
+<text x="640" y="1001" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="23" font-weight="600" fill="#26364a" text-anchor="middle">atomid′ = atomid XOR rowid；其余地址位保持不变</text>
+</svg>

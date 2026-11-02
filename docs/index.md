@@ -1,7 +1,7 @@
 ---
 title: 图解技术笔记
 status: published
-updated: 2026-10-30
+updated: 2026-11-02
 ---
 
 # 图解技术笔记
@@ -17,6 +17,8 @@ updated: 2026-10-30
 前四章已经发布：从产品演进到 Hopper、Blackwell 与 Rubin 的 PTX 接口，再结合专利与逆向资料分析 TMA 内部模块、数据通路、Multicast 和 Group 完成机制。
 
 [TMA 地址生成：Tile 与 Im2col](hardware/nvidia-tma/address-generation.md) 从逻辑 Tensor 和坐标映射出发，推导 OOB 判断与 Global Memory 地址。
+
+[NVIDIA Swizzle 分析](hardware/nvidia-tma/swizzle.md) 从 bank 访问与对齐分组需求出发，解释分层重排、XOR 实现和 NVIDIA 的模式定义。
 
 ## 模型解析
 

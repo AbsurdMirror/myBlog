@@ -1,7 +1,7 @@
 ---
 title: NVIDIA Tensor Memory Accelerator 调研
 status: published
-updated: 2026-10-30
+updated: 2026-11-02
 ---
 
 # NVIDIA Tensor Memory Accelerator 调研
@@ -22,7 +22,7 @@ updated: 2026-10-30
 | 篇目 | 内容 | 状态 |
 |---|---|---|
 | [TMA 地址生成：Tile 与 Im2col](address-generation.md) | 从逻辑 Tensor、Pixel Box 和坐标转换到 OOB 判断与 Global Memory 地址 | 已发布 |
-| NV Swizzle 分析 | 数据重排与地址变换 | 草稿，尚未发布 |
+| [NVIDIA Swizzle 分析](swizzle.md) | 从 bank 访问与对齐分组需求，推导分层交换、XOR 和地址位变换 | 已发布 |
 
 ## 阅读提示
 
@@ -35,5 +35,5 @@ updated: 2026-10-30
 
 ## 当前范围
 
-当前发布包含 4 篇章节正文、1 篇独立文章、33 张配图与一份精简参考资料索引。第四章和地址生成文章在正文中链接原始资料，便于对照。
+当前发布包含 4 篇章节正文、2 篇独立文章、36 张配图与一份精简参考资料索引。第四章和独立文章在正文中链接原始资料，便于对照。
 
