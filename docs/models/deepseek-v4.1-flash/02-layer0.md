@@ -30,6 +30,10 @@ Layer 0 先计算 Attention，再计算 MoE；两个子层各有独立的一套 
 
 ## 2. mHC
 
+![第 2 章总览：mHC 数据流总览](assets/chapter2_mhc_overview.png)
+
+上方分支生成本次混合系数：post、comb 用于当前出口，pre_out 供下一子层入口；下方展示 pre_in 汇聚、子层计算与残差融合。灰色块表示本章之外的上下文。
+
 ### 2.1 四路输入生成 raw mixes
 
 ![图 2：四路输入生成 raw mixes](assets/02_mhc_mixes_raw.png)
@@ -434,6 +438,10 @@ $$
 
 ## 4. 局部 Attention / SWA
 
+![第 4 章总览：局部 Attention 数据流总览](assets/chapter4_swa_overview.png)
+
+总图按 4.1—4.3 跟踪 Q、共享窗口 KV、注意力输出及两级输出投影；缓存更新封装在 4.1 中，窗口轴表示逻辑候选，不要求完整物化。
+
 这一节沿用 mHC 部分的展开方式：先逐步跟踪张量，再给公式与显存账。记 $N=BS$，窗口宽度 $W=128$；输入 $U:[N,5120]$ 已经过 Attention 入口 RMSNorm。
 
 ### 4.1 生成 Q、共享 KV 与局部窗口
@@ -700,6 +708,10 @@ $$
 当前参考路径先对 $C$ 做原地 FP8 量化—反量化模拟，再把结果以 BF16 写入窗口缓存；因此这里按 BF16 cache 计数。`freqs_cis` 在单层只计一次；虽然相同 RoPE 配置的层理论上可以共享该只读表，固定 revision 的构造器仍为每层分别注册 buffer，整模型实测不能未经验证就按共享扣减。[核查：固定 revision 的 `Attention`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L853-L938)、[`act_quant(inplace=True)` 与 `sparse_attn`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py)
 
 ## 5. MoE 前馈计算
+
+![第 5 章总览：MoE 数据流总览](assets/chapter5_moe_overview.png)
+
+Router 同时输出专家索引 I 和路由权重 w：I 决定参数选择，w 只进入 routed 分支。六个 routed 输出的逻辑视图与 shared 输出在右侧汇总；总图不表示逐 token 复制完整专家参数。
 
 这一节继续沿用前文的展开方式：先跟踪 Router、专家参数索引和专家计算，再核算参数、计算量与 Required Global Memory 理论下界。记
 

@@ -500,6 +500,92 @@
         "article_figure": 7,
         "updated": "2026-11-04"
       }
+    },
+    {
+      "id": "layer0-chapter2-overview",
+      "file": "chapter2_mhc_overview.png",
+      "sha256": "646af2116042d1d19e685ec4340d90307ab5ffd5f7e3506a2045d19bf7bcb59b",
+      "bytes": 107358,
+      "width": 1987,
+      "height": 908,
+      "selection": "initial-python-api-overview",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "一套mHC的通用流程；pre_in来自上一子层，Layer0首次固定[1,0,0,0]，本次pre_out仅用于下一子层。",
+        "X保留四路残差；post、comb服务当前hc_post，参数封装在对应计算模块。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_mhc_chapter_overview.py",
+        "source_sha256": "9d0809791b0c1ca67dfc434966cce08bd27dbdc8763ce96d3d48d9fe5a16d3b9",
+        "article_figure": "chapter-2-overview",
+        "updated": "2026-11-04"
+      }
+    },
+    {
+      "id": "layer0-chapter4-overview",
+      "file": "chapter4_swa_overview.png",
+      "sha256": "b6e11ee29ff83ca7f1f149bb0926d870a745bdbad3e721879426e20105b2d265",
+      "bytes": 91135,
+      "width": 2613,
+      "height": 410,
+      "selection": "initial-python-api-overview",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "Q与共享KV分别进入局部Attention；sink只参与分母，Oprime与最终5120维输出分开展示。",
+        "Cwin为按batch展开的概念窗口，Swin不恒为128；sink参数实际[64]以1×64横向展示。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_swa_chapter_overview.py",
+        "source_sha256": "5fcae581b83a27fa8e003caf302c9c1e52ba6043fecc4b928411e9b230973eb9",
+        "article_figure": "chapter-4-overview",
+        "updated": "2026-11-04"
+      }
+    },
+    {
+      "id": "layer0-chapter5-overview",
+      "file": "chapter5_moe_overview.png",
+      "sha256": "a520aaad55f20d2a983e5e0975de1134e90ba8520541e30f8d5fa86543e6c18f",
+      "bytes": 147454,
+      "width": 2167,
+      "height": 872,
+      "selection": "initial-python-api-overview",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "Router原始分数归一化乘1.5，修正量只影响专家选择；参数索引是逻辑关系。",
+        "六个routed专家在输出投影前乘路由权重，shared无TopK也无路由加权；FP32汇总。",
+        "Y_routed[B×S,6,5120]是逻辑selected-slot输出视图，不表示实际物化。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_moe_chapter_overview.py",
+        "source_sha256": "4a3bba1927269335399ec41b6a711600f08ffee5a9b37459489a7ec2490ad910",
+        "article_figure": "chapter-5-overview",
+        "updated": "2026-11-04"
+      }
+    },
+    {
+      "id": "layer1-engram-chapter-overview",
+      "file": "chapter2_layer1_engram_overview.png",
+      "sha256": "67fabfb6a705fedb87ea4a27d7a257d9dcf2c750109eb87003e52574dc47eb6d",
+      "bytes": 31811,
+      "width": 1191,
+      "height": 468,
+      "selection": "initial-python-api-overview",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "2.1、2.2各一个OP；X和Y各为4个[B×S,5120]矩阵的matrix_group，首尾矩阵及省略号表示四路。",
+        "T原始为[B,S]，图中按[B×S,1]逐token列展示；X独立进入2.2，pre_next不变。",
+        "上行T→2.1→Eflat，下行X组→2.2→Y组；Eflat在2.2正上方垂直输入。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer1_engram_chapter_overview.py",
+        "source_sha256": "333b833273a0525292a9092a6856d00f01a57fb78764ef6788ba217c24cea0f6",
+        "article_figure": "chapter-2-overview",
+        "updated": "2026-11-04"
+      }
     }
   ]
 }

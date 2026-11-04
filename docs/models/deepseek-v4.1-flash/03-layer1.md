@@ -1,7 +1,7 @@
 ---
 title: Layer 1：从 Engram 写入到局部注意力与 MoE
 status: published
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # Layer 1：从 Engram 写入到局部注意力与 MoE
@@ -61,6 +61,10 @@ $$
 固定配置中 `compress_ratios[1]=0`，而 `kv_source_layers` 与 `index_source_layers` 都从 Layer 2 开始。因此 Layer 1 与 Layer 0 一样只执行 SWA；本页新增的注意力外路径只有 Engram。[配置核查](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json)
 
 ## 2. Engram
+
+![第 2 章总览：Engram 查表、四路门控与残差写回](assets/chapter2_layer1_engram_overview.png)
+
+总图按小节组织：2.1 从 Token 生成地址并查表，输出 $E_{\mathrm{flat}}$；2.2 结合检索结果和四路残差 $X$，输出更新后的四路残差 $Y$。图中合并展示 B、S 两个维度，传入的 `pre_next` 保持不变。
 
 ### 2.1 从 Token 到 24 个查表结果
 
