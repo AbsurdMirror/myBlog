@@ -2,7 +2,7 @@
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
 status: published
-updated: 2026-10-14
+updated: 2026-11-04
 order: 2
 ---
 
@@ -15,6 +15,8 @@ order: 2
 $B$ 表示 batch，$S$ 表示本次处理的 token 数，$\mathrm{BxS}=B\times S$ 表示合并后的 token 维。Attention 仍按各自会话计算。
 
 ![图 1：Layer 0 总览](assets/01_layer0_overview.png)
+
+图 1 中蓝色表示数据张量，浅绿色表示计算步骤；粗线表示四路残差的整体传递，细线表示单路数据或系数传递。
 
 Layer 0 先计算 Attention，再计算 MoE；两个子层各有独立的一套 mHC。初始四路来自同一份 embedding，整体形状为 `[BxS,4,5120]`，首次 pre 为 `[1,0,0,0]`。
 
@@ -66,8 +68,6 @@ $X$ 提供投影内容，$r$ 按行广播，对投影结果逐行缩放。
 
 ### 2.2 生成 pre、post、comb
 
-![图 3：生成 pre、post、comb](assets/03_mhc_coefficient_generation.png)
-
 $M$ 以及由它生成的 pre、post、comb 都是随输入变化的动态值。下面的 $s$、$b$ 是训练得到的模型参数，对所有 token 共用；固定常数由算法给定。
 
 | 对象 | 来源与含义 |
@@ -81,6 +81,10 @@ $\sigma$ 为 Sigmoid：
 $$
 \sigma(x)=\frac{1}{1+e^{-x}}
 $$
+
+![图 3.1：生成 pre 与 post](assets/03_1_mhc_pre_post.png)
+
+图 3.1 中，$T$ 表示乘缩放系数、加偏置后的中间结果，$U$ 表示 Sigmoid 的输出；下标区分 pre、post 两条分支。$k=2.0$ 是固定常数，不参与训练。
 
 #### 生成 pre
 
@@ -121,6 +125,10 @@ $$
 $$
 
 #### 生成 comb
+
+![图 3.2：生成 comb](assets/03_2_mhc_comb.png)
+
+图 3.2 按上行从左到右、下行从右到左阅读。$A_0$ 是重排后的矩阵，$A_1$、$A_2$、$A_3$ 分别表示行 Softmax、加 $c$、首次列归一化后的结果；$R$ 是后续迭代中行归一化后的中间结果。回环标记 `repeat 19` 表示该阶段共执行 $19$ 轮行、列归一化，包含图中展示的一轮。
 
 先得到 $C_0:[\mathrm{BxS},16]$：
 
@@ -758,7 +766,7 @@ W_{2,i,e}=W_{2,I_{i,e}},\qquad
 W_{3,i,e}=W_{3,I_{i,e}}
 $$
 
-图 11、图 12 黄色矩阵旁的尺寸采用行向量乘法视角 `[输入,输出]`，所以写作 $5120\times2304$ 或 $2304\times5120$；正文则始终采用参数存储视角 `[输出,输入]`，计算时显式写转置。两种标法描述的是同一组矩阵。
+图 11、图 12 与正文统一采用参数存储视角 `[输出,输入]`，计算时显式写转置。
 
 这里的 gather 是**逻辑索引关系**，不表示为每个 token 复制六份完整参数。参考实现反过来按 expert id 统计 token 数，用 `where(indices == expert_id)` 收集属于该专家的 token，再批量调用一次 expert。多卡时 $384$ 个 routed experts 按 rank 切分，各 rank 计算自己的局部专家后对 FP32 输出累加器做 `all_reduce`；shared expert 在各 rank 本地执行。[核查：固定 revision 的 `MoE`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1095-L1145)
 
@@ -811,7 +819,7 @@ Y_i=\sum_{e=0}^{5}Y_{i,e}+Y_{i,s}
 },\qquad Y:[N,5120]
 $$
 
-原始交付图曾把两处 Gate 上限误写为 $0$；图 12 已依据官方 `clamp(gate,max=10)` 修正为 $10$，其余结构保持不变。[核查：固定 revision 的 `Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1071-L1092)
+图 12 中两条专家通路的 Gate 上界均为 $10$，与参考实现的 `clamp(gate,max=10)` 一致。[核查：固定 revision 的 `Expert`](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1071-L1092)
 
 ### 5.4 参数量
 

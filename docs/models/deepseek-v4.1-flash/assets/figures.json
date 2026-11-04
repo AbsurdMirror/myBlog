@@ -4,235 +4,277 @@
     {
       "id": "layer0-01",
       "file": "01_layer0_overview.png",
-      "sha256": "4047aa3f67182add343af7acb7b8b4d3797e1d21fb597832d1189876124d4a34",
-      "bytes": 207531,
-      "width": 2469,
-      "height": 1492,
-      "selection": "user-approved-tdg",
-      "semantic_review": "needs-annotation-review",
+      "sha256": "a52bd1c7634acc9b079d112622f96141457715b8811cf3b8f083913a569f95dc",
+      "bytes": 179132,
+      "width": 2422,
+      "height": 1563,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "第0层顶部pre为固定[1,0,0,0]；comb的16按每token元素数读。"
+        "第0层顶部pre为固定[1,0,0,0]；comb的16按每token元素数读。",
+        "普通算子统一浅绿色、数据矩阵蓝色；本层作为基准层。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_overview.tdg",
-        "source_sha256": "df32c006a8aff16796482c8c87f1bf3539692bf7bca84b646c6cfe8fca023139",
+        "tool": "tensor-python-api",
+        "source": "examples/overview_color_candidates_20261102/layer0_overview.py",
+        "source_sha256": "a3ffdc4c18b26f55d538855cfde7089a16a7dfe03f5e41ad2885225f2d847025",
         "article_figure": 1,
-        "updated": "2026-10-29"
+        "updated": "2026-11-02"
       }
     },
     {
       "id": "layer0-02",
       "file": "02_mhc_mixes_raw.png",
-      "sha256": "389a9cba4f46d3629d41987f7ef573a72326b3ae4bdcc3fc528e2d5b59927caf",
-      "bytes": 1883417,
-      "width": 1086,
-      "height": 1448,
-      "selection": "user-selected-original-blog-image",
-      "semantic_review": "needs-annotation-review",
+      "sha256": "9d001453c52485f45ffbdbf6cdc49b0b5f50deffce17cfeecd8141758bb1d290",
+      "bytes": 91375,
+      "width": 969,
+      "height": 1451,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed",
       "notes": [
-        "投影还读取Xf，不能把r视为唯一输入；保留原图不改线。"
+        "联合投影同时读取X、W和r；X由右侧旁路输入，r按token缩放。"
       ],
       "rendering": {
-        "tool": "original-blog-image",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_mhc_mixes_raw.py",
+        "source_sha256": "0601019417e421a9252f3afeda66c30396cb8dfc561ad08f6ec6e0fecfb07a7b",
         "article_figure": 2,
-        "updated": "2026-10-29"
+        "updated": "2026-11-02"
       }
     },
     {
-      "id": "layer0-03",
-      "file": "03_mhc_coefficient_generation.png",
-      "sha256": "89f4ac100a5bfbd050b2eb682ce5dabeea9374cd7b3eb4c44852505ba5061c1c",
-      "bytes": 127780,
-      "width": 1568,
-      "height": 1170,
-      "selection": "user-approved-tdg",
-      "semantic_review": "needs-annotation-review",
+      "id": "layer0-03-1",
+      "file": "03_1_mhc_pre_post.png",
+      "sha256": "d387d536334b695fd9927577825d97468a7fd47ad73307d33169a5ef4b4c4e31",
+      "bytes": 59265,
+      "width": 1167,
+      "height": 719,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "底部epsilon括号容易误读；应在row Softmax之后相加。"
+        "pre/post分别按乘s加b、Sigmoid、加epsilon或乘固定k=2.0生成；中间状态均为[B×S,4]。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_mhc_coefficient_formula.tdg",
-        "source_sha256": "c76083468cad2470cd322e4fdfb4577b6c1e1c2b45894010be0adec568ba095c",
-        "article_figure": 3,
-        "updated": "2026-10-29"
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_mhc_pre_post_layout.py",
+        "source_sha256": "74fbde38567c8de8b31b0adc2eb39626f2827a4cef258c986e728c59d9b8e484",
+        "article_figure": "3.1",
+        "updated": "2026-11-02"
+      }
+    },
+    {
+      "id": "layer0-03-2",
+      "file": "03_2_mhc_comb.png",
+      "sha256": "d31431f9619eead2b099b4a6f66b9ee35de713e4f8c356249ff4c122a891137a",
+      "bytes": 79254,
+      "width": 1908,
+      "height": 880,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
+      "notes": [
+        "行Softmax后加c，再首次列归一化；回环repeat 19表示后续行归一化、列归一化共执行19轮，包含图中展示的一轮。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_mhc_comb_layout.py",
+        "source_sha256": "5325947b68d3a6af1edaa900f0654169a3377c328d6d9d12307397cbe2a1c1e6",
+        "article_figure": "3.2",
+        "updated": "2026-11-02"
       }
     },
     {
       "id": "layer0-04",
       "file": "04_mhc_hc_pre.png",
-      "sha256": "1181fbbaf33f0f91ef733e6528ff543b7ccdb7783e46866c7f01c17672c5ec8e",
-      "bytes": 60734,
-      "width": 1030,
-      "height": 740,
-      "selection": "user-approved-tdg",
+      "sha256": "f6493ec06656b6461246d8af88491aff178902f897c363169e3db938202b4d5e",
+      "bytes": 53775,
+      "width": 1294,
+      "height": 666,
+      "selection": "user-approved-python-api",
       "semantic_review": "reviewed",
-      "notes": [],
+      "notes": [
+        "四个动态系数a_i分别按hidden维广播乘对应X_i；四个mul以独立箭头输入add，沿四路求和得到Z。"
+      ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_mhc_pre.tdg",
-        "source_sha256": "d552f193a7fe355e46a66678a99905492bccd1f84d89fcc15a0681f169fff9b1",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_mhc_pre_api.py",
+        "source_sha256": "1ea9fafe4d482b580b61bdd4848f86a233af69d37b8be507f1bb1dad3af53dab",
         "article_figure": 4,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-05",
       "file": "05_mhc_hc_post.png",
-      "sha256": "e7098abe4c06312a380237c7878f3be15d35a9c2f3712313203d4ba03b24604e",
-      "bytes": 107790,
-      "width": 1719,
-      "height": 942,
-      "selection": "user-approved-tdg",
-      "semantic_review": "needs-annotation-review",
+      "sha256": "4504665352aae880f405ea54e98a48f21135f3389dec28120baf273555a4e82f",
+      "bytes": 122617,
+      "width": 1997,
+      "height": 1066,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed",
       "notes": [
-        "右侧固定输出j应读取全部4路Xi；post_j广播形状为[B*S,1]。"
+        "左侧整体四路与右侧固定输出j展示同一残差融合计算；comb混合旧残差，post按hidden广播写入子层输出。",
+        "五行对应对齐；各输入和各中间结果通过独立箭头连接，求和不跨token或hidden。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_mhc_post.tdg",
-        "source_sha256": "b20cce6e88753cf9f4a5bc632e812f88a3b4622ddebfae82f442967973a5b971",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_mhc_post_api.py",
+        "source_sha256": "d3764b14c51e2c6fbb436013b8b566a842cabd5c0bf94e02a68a5f94aa77affb",
         "article_figure": 5,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-06",
       "file": "06_swa_q_kv_window.png",
-      "sha256": "441d7056f8282de984097a45b0c0577c3d4b2c9c8f9009d342c860d9284215bf",
-      "bytes": 101040,
-      "width": 1957,
-      "height": 696,
-      "selection": "user-approved-tdg",
+      "sha256": "6635b9956d4537802f28689c3842d82aa00bcd77c9094462a28d19808d7000d1",
+      "bytes": 137580,
+      "width": 2769,
+      "height": 1204,
+      "selection": "user-approved-python-api",
       "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "图中的C_win是逻辑视图；prefill通过topk_idxs索引当前C并更新环形缓存，decode再索引缓存，不要求完整物化C_win。"
+        "Q投影展开维度为32768；权重按[输出,输入]表示，Q以[B×S,64,512]合并token维展示。",
+        "C、Ccache、Cwin用matrix_group表达按batch展开的二维矩阵组；共享C=K=V，RoPE只作用后64维，前448维直通。",
+        "S、Scache、Swin的绘图高度相同仅为视觉选择，不表示实际长度相等；Cwin是概念窗口视图，不要求物化，Swin不恒为128。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_swa_q_kv_window.workflow.hard-rule-retest-isolated-e29.tdg",
-        "source_sha256": "b1a711404f38ff8135a70d827b3027ff4dcda6701d1f79150fc953f3281ef3d5",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_swa_qkv_api.py",
+        "source_sha256": "9700ce56799b247f9f2802b53100eda1478de7116c1eb83fcfa46edf56909d00",
         "article_figure": 7,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-07",
       "file": "07_swa_mask_sink_softmax.png",
-      "sha256": "00d5763a0a77536d431b4fa401e2f1b083c4d60c3820c1694c1a6c8538a856af",
-      "bytes": 84641,
-      "width": 2487,
-      "height": 614,
-      "selection": "user-approved-tdg",
-      "semantic_review": "reviewed",
+      "sha256": "3249e657b9c0aeda6fe8441bfbbf445e26192aa4b54a76d0c7b02720cbb6486b",
+      "bytes": 81926,
+      "width": 2919,
+      "height": 641,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "正文用绝对位置定义SWA mask，并补充数值稳定的在线sink softmax。"
+        "Q按batch展开为B个[S,64,512]张量；E、Z、P为B个[S,64,Swin]，O′恢复为B个[S,64,512]。",
+        "三维张量组使用matrix_group，数量B与成员深度分离；sink只进入softmax分母，没有对应value。",
+        "Swin表示候选窗口轴K_idx，不恒为128；E、Z、P为逻辑示意，不表示完整物化。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_swa_mask_sink_softmax.step4-candidate.tdg",
-        "source_sha256": "665332b54118cc5234c9b0b8a25899c2876e282399857ae25a6e6357c10703bd",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_swa_sink_api.py",
+        "source_sha256": "426cbe34228c487983ddf8ca8e1eb7dd42602113a6d596dfad21a5180dec96c8",
         "article_figure": 8,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-08",
       "file": "08_swa_output_projection.png",
-      "sha256": "053892627c52873166b6eb9b88c851799996bbb06d2bb185328cd0186069bbb7",
-      "bytes": 55537,
-      "width": 1979,
-      "height": 461,
-      "selection": "user-approved-tdg",
+      "sha256": "2b9dc7a6f8d0eecd507636fc6d42e6f680fe50e4cd8940dd1b2914914f493753",
+      "bytes": 87236,
+      "width": 1830,
+      "height": 809,
+      "selection": "user-approved-python-api",
       "semantic_review": "reviewed",
-      "notes": [],
+      "notes": [
+        "两行U形通路；inverse RoPE仅处理后64维，前448维直通。",
+        "第一级grouped matmul使用Woa[8,1024,4096]，保留8组，结果[B×S,8,1024]再展平为[B×S,8192]。",
+        "第二级使用Wob[5120,8192]投影回5120维；两个权重均位于算子下方向上输入。"
+      ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_swa_output_projection.tdg",
-        "source_sha256": "7142db8a1c68f2e466f6829c879dbeff79755b77860ada35ba8506cdd89e94c9",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_swa_output_api.py",
+        "source_sha256": "c2ee1b7f465f18affbb4ec6e28db5f4ab2021fcfdde56c4b38eaf7032c5e8041",
         "article_figure": 9,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-09",
       "file": "09_rmsnorm_forward.png",
-      "sha256": "26255bc6da55253a64d3a2a8857cca9ffb7dd649f289f1111e8d162049cce248",
-      "bytes": 87643,
-      "width": 1358,
-      "height": 803,
-      "selection": "user-approved-tdg",
-      "semantic_review": "reviewed",
+      "sha256": "836759840757f9aa7d56ac4fbd05ceb42b593c4be4ee7d927d8c6ff9fb8c032c",
+      "bytes": 81272,
+      "width": 1292,
+      "height": 814,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "正文补充FP32内部计算、BF16输入输出与gamma，以及两套入口Norm的参数和显存复用口径。"
+        "四步展示逐token均方、rsqrt缩放因子、沿hidden广播归一化与可学习gamma缩放；没有bias、不减均值。",
+        "gamma以[1,5120]行表示绘制，实际参数向量仍为[5120]；输入输出BF16、内部FP32与dtype转换详见正文，图略去转换步骤。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_rmsnorm_forward.step4-candidate.tdg",
-        "source_sha256": "2818e2bcee76303fee7e0c47d6ae99fe75db77163ea47b941ec5fe59cf95a33a",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_rmsnorm_api.py",
+        "source_sha256": "dad05f7a62eaadc1b16ba07185e351963ed71796149f15d82a986ebaa44ac0a7",
         "article_figure": 6,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-10",
       "file": "10_moe_router.png",
-      "sha256": "c43164515ec59682ac970ce624b30af62c5fe847793c6573010bf84f54ab8564",
-      "bytes": 75376,
-      "width": 2130,
-      "height": 829,
-      "selection": "user-approved-tdg",
-      "semantic_review": "reviewed",
+      "sha256": "99f7aefcb94fbf07b896f808129c9f169e75274e9076f8f1965fb0aaa3d11f4c",
+      "bytes": 73588,
+      "width": 1791,
+      "height": 801,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "已对照固定revision核查：文本/视觉修正量只影响Top-6选择，权重从原始Sqrt-Softplus分数gather并归一化。"
+        "修正分数仅用于Top-6选择；gather从原始正分数S读取，按索引I取出六项后归一化并乘1.5，分母含1e-20。",
+        "Wg采用参数存储shape[384,5120]；b与bvl实际为384维向量，图中按1×384横向展示。",
+        "image_mask为文本/图像token布尔标记，以B×S行展示；b、mask、bvl图形中心同高。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_moe_router.step4-candidate.tdg",
-        "source_sha256": "bf4c7ed5042435f2d59426eff06a5d64cb7cfe52b83571ee5ac4b770b072a1b4",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_router_api.py",
+        "source_sha256": "e8ffdac73c1aa48c3fba56703253af214b62c0602e663e258a3af3f259361332",
         "article_figure": 10,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-11",
       "file": "11_moe_expert_parameter_gather.png",
-      "sha256": "745300771ad1069b6a17bb68f8a81f0bd34132b0f58471f384201d4ee6d07047",
-      "bytes": 93736,
-      "width": 2075,
-      "height": 930,
-      "selection": "user-approved-tdg",
+      "sha256": "e55c1fd5c87cb6dfd695328e64887a65aa12cb0f847e2f17eae2095108ea323f",
+      "bytes": 57192,
+      "width": 2137,
+      "height": 563,
+      "selection": "user-approved-python-api",
       "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "图中矩阵尺寸按行向量乘法的[input,output]视角标注；正文统一按PyTorch参数存储[output,input]书写。gather是逻辑视图，不表示逐token复制完整专家权重。"
+        "左侧三列matrix_group表示384个专家的三类参数；W1/W3[2304,5120]、W2[5120,2304]统一按参数存储[输出,输入]标注。",
+        "索引I[B×S,6]以g=I[i,e]选择专家；右侧展示单个token、slot对应的完整三参数组，每个token选择6组。",
+        "gather表示逻辑索引关系，不表示逐token复制完整参数。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_moe_expert_parameter_gather.tdg",
-        "source_sha256": "e67a0ad4d31f35d48f72d45cad99fde89245f82c8ddb68c3362f3214109133e6",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_expert_gather_api.py",
+        "source_sha256": "b56e78b8bf97dad350106e7ddc6df75250c5752d4471097f287ffe25460f7742",
         "article_figure": 11,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
       "id": "layer0-12",
       "file": "12_moe_expert_computation.png",
-      "sha256": "c37f61ae373503d64450290302e875ee987cc1d5d33e53c041e644c565f21d90",
-      "bytes": 413077,
-      "width": 4409,
-      "height": 2098,
-      "selection": "tdg-readability-preview",
-      "semantic_review": "reviewed",
+      "sha256": "d6c0ed30a0dbd46ad256c77f37e68e9900c0a68c963e5d61ad50cccd3f070f1f",
+      "bytes": 220575,
+      "width": 3885,
+      "height": 1778,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-with-text-qualification",
       "notes": [
-        "原始交付图两处Gate上限误写为min(G,0)；采用版依据官方clamp(gate,max=10)修正为min(G,10)，其余结构保持原风格。"
+        "上下两条专家通路横向展开；routed表示e=0..5六次独立专家计算，shared执行一次且不乘路由权重。",
+        "W1/W3[2304,5120]、W2[5120,2304]按参数存储[输出,输入]标注；单token数据按1×特征维展示。",
+        "Gate只裁剪上界10，Up裁剪到[-10,10]；routed在W2之前以FP32乘权重，转回输入dtype步骤由正文说明，图中省略cast节点。",
+        "上下H、W2投影及输出对应列对齐；shared直接跨过路由加权阶段，汇总以FP32累加六路routed与一路shared。"
       ],
       "rendering": {
-        "tool": "tensor-tikz",
-        "source": "examples/layer0_moe_expert_computation.step4.tdg",
-        "source_sha256": "94ce6d083f5dac6e1a46c5b77f5755d1e98327c8106ff2cc35d990035790845f",
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_expert_compute_api.py",
+        "source_sha256": "841610a5d3c47cdd5ccd3000ca9acec0d43109bdc65b6294aff27b01ea5c8858",
         "article_figure": 12,
-        "updated": "2026-10-29"
+        "updated": "2026-11-03"
       }
     },
     {
