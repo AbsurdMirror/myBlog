@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Layer 2：从局部注意力到压缩稀疏注意力与 MoE · 图解技术笔记</title><link rel="stylesheet" href="../../_static/site.css?v=ad8b3e0d7f83"></head>
+<body><header class="topbar"><a class="brand" href="../../index.html">图解技术笔记</a><span class="topmeta">MODEL NOTES</span></header>
+<aside class="sidebar"><p class="series-label">模型 · 算法 · 系统</p><strong>图解技术笔记</strong><p class="sidebar-note">结构与数学，逐层展开</p><details class="site-links" open><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/03-blackwell-rubin-ptx.html">NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进</a><a href="../../hardware/nvidia-tma/04-hardware-design.html">NVIDIA TMA（四）：TMA 硬件设计</a><a href="../../hardware/nvidia-tma/address-generation.html">NVIDIA TMA：地址生成（Tile 与 Im2col）</a><a href="../../hardware/nvidia-tma/swizzle.html">NVIDIA Swizzle 分析</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="04-layer2.html">Layer 2：从局部注意力到压缩稀疏注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><nav id="page-toc" aria-label="本页目录"></nav><div class="side-foot"><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/04-layer2.md">本页 Markdown</a> · <a href="https://github.com/AbsurdMirror/myBlog/tree/main">源码仓库</a></div></aside>
+<main><div class="edition"><span>TECHNICAL NOTES</span></div><details class="mobile-nav"><summary>文档目录</summary><a href="../../index.html">图解技术笔记</a><a href="../../hardware/nvidia-tma/index.html">NVIDIA Tensor Memory Accelerator 调研</a><a href="../../hardware/nvidia-tma/01-overview.html">NVIDIA TMA（一）：产品迭代与 TMA 概述</a><a href="../../hardware/nvidia-tma/02-hopper-ptx.html">NVIDIA TMA（二）：Hopper 第一代 TMA 的 PTX 设计</a><a href="../../hardware/nvidia-tma/03-blackwell-rubin-ptx.html">NVIDIA TMA（三）：Blackwell 与 Rubin 的 TMA PTX 演进</a><a href="../../hardware/nvidia-tma/04-hardware-design.html">NVIDIA TMA（四）：TMA 硬件设计</a><a href="../../hardware/nvidia-tma/address-generation.html">NVIDIA TMA：地址生成（Tile 与 Im2col）</a><a href="../../hardware/nvidia-tma/swizzle.html">NVIDIA Swizzle 分析</a><a href="../../hardware/nvidia-tma/references.html">NVIDIA TMA 调研参考资料索引</a><a href="index.html">DeepSeek-V4.1-Flash 图解系列</a><a href="02-layer0.html">Layer 0：从四路残差到局部注意力与 MoE</a><a href="03-layer1.html">Layer 1：从 Engram 写入到局部注意力与 MoE</a><a href="04-layer2.html">Layer 2：从局部注意力到压缩稀疏注意力与 MoE</a><a href="../../legacy/index.html">旧博客归档</a></details><article class="doc"><h1 id="layer-2从局部注意力到压缩稀疏注意力与-moe">Layer 2：从局部注意力到压缩稀疏注意力与 MoE</h1>
+<h2 id="layer-2-总览">1. Layer 2 总览</h2>
+<p>Layer 2 从 Layer 1 接收：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(BF16)</mtext><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(FP32)</mtext><mi>.</mi></mrow><annotation encoding="application/x-tex">
+X_{\mathrm{in}}:[B,S,4,5120]\quad\text{(BF16)},
+\qquad
+p_{\mathrm{next}}:[B,S,4]\quad\text{(FP32)}.
+</annotation></semantics></math></p>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">X_{\mathrm{in}}</annotation></semantics></math> 是四路残差，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">p_{\mathrm{next}}</annotation></semantics></math> 是 Layer 1 的 MoE 侧 mHC 生成的下一次汇聚系数。</p>
+<p>Layer 2 向 Layer 3 输出：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(BF16)</mtext><mo>,</mo><mspace width="2.0em"></mspace><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(FP32)</mtext><mi>.</mi></mrow><annotation encoding="application/x-tex">
+X_{\mathrm{out}}:[B,S,4,5120]\quad\text{(BF16)},
+\qquad
+\mathrm{ffn\_pre}:[B,S,4]\quad\text{(FP32)}.
+</annotation></semantics></math></p>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">X_{\mathrm{out}}</annotation></semantics></math> 是本层更新后的四路残差，<code>ffn_pre</code> 是本层 MoE 侧 mHC 生成的汇聚系数，作为 Layer 3 的 <code>pre_next</code>。</p>
+<p>完整数据流为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mrow><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>,</mo><msub><mi>p</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">t</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>→</mo><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mspace width="0.222em"></mspace><mn mathvariant="normal">2</mn><mspace width="0.222em"></mspace><mi mathvariant="normal">B</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">k</mi></mrow><mo>→</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>,</mo><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi></mrow><mo stretchy="true" form="postfix">)</mo></mrow></mrow></menclose><annotation encoding="application/x-tex">
+\boxed{
+(X_{\mathrm{in}},p_{\mathrm{next}})
+\rightarrow \mathrm{Layer\ 2\ Block}
+\rightarrow (X_{\mathrm{out}},\mathrm{ffn\_pre})
+}
+</annotation></semantics></math></p>
+<p><img src="assets/17_layer2_overview.png?v=6cc3f1816931" alt="图 1：Layer 2 整层总览：压缩稀疏注意力与动态跨层 pre" /></p>
+<p>Layer 2 依次执行 Attention 和 MoE，两侧均通过 mHC 完成四路残差的汇聚与融合。橙色 Sparse Attention 框内新增压缩、检索与 Global KV 路径，并调整 RoPE 配置，后续章节将展开说明。各步骤的作用及其与前文的关系如下；结构相同的算子仍使用本层独立参数。</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>步骤</th>
+<th>Layer 2 的行为</th>
+<th>与前文的关系</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1. mHC 混合系数生成</td>
+<td>根据输入四路残差，生成 Attention 侧混合系数</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="even">
+<td>2. mHC 汇聚</td>
+<td>使用 <code>pre_next</code>，将输入四路残差汇聚为单路特征</td>
+<td>与 Layer 1 相同</td>
+</tr>
+<tr class="odd">
+<td>3. RMSNorm</td>
+<td>对单路特征归一化，得到 Attention 输入</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="even">
+<td>4. Sparse Attention</td>
+<td>接收归一化后的输入，结合局部 KV 与检索出的压缩 KV 计算注意力，输出单路特征</td>
+<td>本文重点展开</td>
+</tr>
+<tr class="odd">
+<td>5. mHC 残差融合</td>
+<td>使用 Attention 侧混合系数，将 Attention 输出与四路残差融合，得到更新后的四路残差</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="even">
+<td>6. mHC 混合系数生成</td>
+<td>根据更新后的四路残差，生成 MoE 侧混合系数</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="odd">
+<td>7. mHC 汇聚</td>
+<td>使用 <code>attn_pre</code>，将更新后的四路残差汇聚为单路特征</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="even">
+<td>8. RMSNorm</td>
+<td>对单路特征归一化，得到 MoE 输入</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="odd">
+<td>9. MoE FFN</td>
+<td>接收归一化后的输入，经专家路由与前馈计算，输出单路特征</td>
+<td>与 Layer 0 相同</td>
+</tr>
+<tr class="even">
+<td>10. mHC 残差融合</td>
+<td>使用 MoE 侧混合系数，将 MoE 输出与四路残差融合，得到本层输出四路残差</td>
+<td>与 Layer 0 相同</td>
+</tr>
+</tbody>
+</table>
+<h2 id="压缩稀疏-attention">2. 压缩稀疏 Attention</h2>
+<p>相比于原始的全量 Attention，Layer 2 使用<strong>压缩稀疏 Attention</strong>。原始 Attention 从输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math> 分别生成 Q、K、V；这里的 K 和 V 共用同一份表示，并分为 Local KV 和 Global KV，分别提供近期 token 的局部信息与压缩后的历史信息。</p>
+<p>Q 和 Local KV 的生成过程与 Layer 0 基本相同，区别在于所使用的 RoPE 配置。Global KV 则走另一条路径：先由 Compressor 将每两个 token 压缩为一个 KV，再完成 RoPE 和缓存更新，供本层及指定的后续层共享。Indexer 为每个 Query 从压缩历史中选出最多 512 个位置，与最近最多 128 个 Local KV 共同组成 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">C_{\mathrm{win}}</annotation></semantics></math>，参与注意力计算。</p>
+<p><img src="assets/18_layer2_attention_pipeline.png?v=092a2e22899d" alt="图 2：Layer 2 压缩稀疏 Attention 的五个模块与输入输出" /></p>
+<p>下文按图中的五个模块展开：</p>
+<ul>
+<li><strong>2.1 Q 与 Local KV 生成的差异</strong>：说明相比 Layer 0 的 RoPE 配置变化，以及供 Indexer 使用的 Query 中间结果。</li>
+<li><strong>2.2 Compressor</strong>：说明两 token 压缩为一个 KV 的过程与状态更新。</li>
+<li><strong>2.3 Indexer</strong>：说明压缩历史的评分与 Top-K 位置选择。</li>
+<li><strong>2.4 Local 与 Global KV 及索引合并</strong>：说明 Global KV 更新，以及候选 KV 的索引组织与读取。</li>
+<li><strong>2.5 稀疏注意力计算与输出</strong>：说明与 Layer 0 计算过程的对应关系及候选长度变化。</li>
+</ul>
+<h3 id="q-与-local-kv-生成的差异">2.1 Q 与 Local KV 生成的差异</h3>
+<p><img src="assets/19_layer2_q_local_kv.png?v=228ee456a6ce" alt="图 3：Layer 2 的 Q 与 Local KV 生成，橙色标出 RoPE 配置变化；窗口示意仅对应 Local 分支" /></p>
+<p>橙色标出的两个 RoPE 算子采用 Layer 2 的频率配置，与 Layer 0 的区别如下：</p>
+<table>
+<thead>
+<tr class="header">
+<th>配置</th>
+<th>Layer 0</th>
+<th>Layer 2</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>RoPE 基础频率 <code>theta</code></td>
+<td>10000</td>
+<td>160000</td>
+</tr>
+<tr class="even">
+<td>YaRN</td>
+<td>不启用</td>
+<td>启用，扩展因子为 16</td>
+</tr>
+<tr class="odd">
+<td>YaRN 原始上下文长度</td>
+<td>不适用</td>
+<td>65536</td>
+</tr>
+</tbody>
+</table>
+<p>Layer 2 的 YaRN 参数为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>β</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mn>32</mn></mrow><annotation encoding="application/x-tex">\beta_{\mathrm{fast}}=32</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>β</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">w</mi></mrow></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\beta_{\mathrm{slow}}=1</annotation></semantics></math>，按频段调整旋转频率，并非将全部频率统一除以 16。上述配置同时用于 Q 和 Local KV 的 RoPE。</p>
+<h3 id="compressor">2.2 Compressor</h3>
+<p><img src="assets/16_layer2_compressor.png?v=de5c122fe0ed" alt="图 4：Layer 2 Compressor 的双路投影、两 token 分组与尾部状态保存" /></p>
+<p>同一输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X:[B,S,5120]</annotation></semantics></math> 经过双路投影，分别生成候选 KV 和逐特征压缩分数：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>V</mi><mo>=</mo><mi>X</mi><msubsup><mi>W</mi><mrow><mi>K</mi><mi>V</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mspace width="2.0em"></mspace><mi>Z</mi><mo>=</mo><mi>X</mi><msubsup><mi>W</mi><mi>Z</mi><mi>𝖳</mi></msubsup><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><mi>V</mi><mo>,</mo><mi>Z</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV=XW_{KV}^{\mathsf T},\qquad Z=XW_Z^{\mathsf T},
+\qquad KV,Z:[B,S,512].
+</annotation></semantics></math></p>
+<p>将上次未配对的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi></mrow></msub><mo>,</mo><msub><mi>Z</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi></mrow></msub></mrow><annotation encoding="application/x-tex">KV_{\mathrm{buf}},Z_{\mathrm{buf}}</annotation></semantics></math> 接到本次结果之前。图中的两个 Split / Reshape 算子分别将完整前缀按两个 token 分组，并把可能剩余的一个 token 保存为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>V</mi><msub><mi>′</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi></mrow></msub><mo>,</mo><mi>Z</mi><msub><mi>′</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi></mrow></msub></mrow><annotation encoding="application/x-tex">KV&#39;_{\mathrm{buf}},Z&#39;_{\mathrm{buf}}</annotation></semantics></math>。本次可生成的压缩 KV 数为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi></mrow></msub><mo>+</mo><mi>S</mi></mrow><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>S</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">f</mi></mrow></msub><mo>∈</mo><mo stretchy="false" form="prefix">{</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo stretchy="false" form="postfix">}</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+S_{\mathrm{comp}}
+=\left\lfloor\frac{S_{\mathrm{buf}}+S}{2}\right\rfloor,
+\qquad S_{\mathrm{buf}}\in\{0,1\}.
+</annotation></semantics></math></p>
+<p>完整分组重排为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mn>2</mn></msub><mo>,</mo><msub><mi>Z</mi><mn>2</mn></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>,</mo><mn>2</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV_2,Z_2:[B,S_{\mathrm{comp}},2,512].
+</annotation></semantics></math></p>
+<p>若本次仍未凑齐一组，则不产生压缩输出。</p>
+<p>对每个特征，在两个 token 之间独立计算 Softmax，再加权汇聚：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><msub><mo>Softmax</mo><mtext mathvariant="normal">两 token 维</mtext></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>Z</mi><mn>2</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>A</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>,</mo><mn>2</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+A=\operatorname{Softmax}_{\text{两 token 维}}(Z_2),
+\qquad A:[B,S_{\mathrm{comp}},2,512],
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>V</mi><msub><mi>′</mi><mrow><mi>b</mi><mo>,</mo><mi>j</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>r</mi><mo>=</mo><mn>0</mn></mrow><mn>1</mn></munderover><msub><mi>A</mi><mrow><mi>b</mi><mo>,</mo><mi>j</mi><mo>,</mo><mi>r</mi><mo>,</mo><mi>d</mi></mrow></msub><mi>K</mi><msub><mi>V</mi><mrow><mn>2</mn><mo>,</mo><mi>b</mi><mo>,</mo><mi>j</mi><mo>,</mo><mi>r</mi><mo>,</mo><mi>d</mi></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV&#39;_{b,j,d}
+=\sum_{r=0}^{1}A_{b,j,r,d}KV_{2,b,j,r,d}.
+</annotation></semantics></math></p>
+<p>最后沿 512 维执行 RMSNorm，得到：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>=</mo><mo>RMSNorm</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><mi>V</mi><mi>′</mi><mo>;</mo><msub><mi>γ</mi><mrow><mi>K</mi><mi>V</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV_{\mathrm{comp}}
+=\operatorname{RMSNorm}(KV&#39;;\gamma_{KV}),
+\qquad KV_{\mathrm{comp}}:[B,S_{\mathrm{comp}},512].
+</annotation></semantics></math></p>
+<p>RMSNorm 算法沿用 Layer 0。投影、Softmax 和汇聚按 FP32 计算；汇聚结果转回 BF16 后执行 RMSNorm，输出为 BF16。此时尚未执行 RoPE，结果分别送入 Indexer 和 Global KV 分支。</p>
+<h3 id="indexer">2.3 Indexer</h3>
+<p><img src="assets/21_layer2_indexer.png?v=bb529e1d924e" alt="图 5：Indexer 的三路生成、全历史评分与因果 Top-K 索引选择" /></p>
+<p>Indexer 使用 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>Q</mi><mi>r</mi></msub><annotation encoding="application/x-tex">Q_r</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">KV_{\mathrm{comp}}</annotation></semantics></math> 和 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math> 三路输入，生成检索 Query、检索 Key 和 head 权重，再对压缩历史评分，为每个 Query 选择最多 512 个访问位置。</p>
+<h4 id="三路生成">2.3.1 三路生成</h4>
+<p>未旋转的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">KV_{\mathrm{comp}}</annotation></semantics></math> 经投影、128 维 RMSNorm 和 Partial RoPE，生成本次新增的检索 Key：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>K</mi><mrow><mi>I</mi><mo>,</mo><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub><mo>=</mo><mo>PartialRoPE</mo><mrow><mo stretchy="true" form="prefix">(</mo><mo>RMSNorm</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><msubsup><mi>W</mi><mrow><mi>I</mi><mi>k</mi></mrow><mi>𝖳</mi></msubsup><mo>;</mo><msub><mi>γ</mi><mrow><mi>I</mi><mi>k</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>K</mi><mrow><mi>I</mi><mo>,</mo><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+K_{I,\mathrm{new}}
+=\operatorname{PartialRoPE}
+\left(\operatorname{RMSNorm}(KV_{\mathrm{comp}}W_{Ik}^{\mathsf T};\gamma_{Ik})\right),
+\qquad K_{I,\mathrm{new}}:[B,S_{\mathrm{comp}},128].
+</annotation></semantics></math></p>
+<p>将新增 Key 与旧历史接续，得到：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>K</mi><mi>I</mi></msub><mo>=</mo><mo>Concat</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>K</mi><mrow><mi>I</mi><mo>,</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>,</mo><msub><mi>K</mi><mrow><mi>I</mi><mo>,</mo><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>K</mi><mi>I</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mi>G</mi></msub><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+K_I=\operatorname{Concat}(K_{I,\mathrm{cache}},K_{I,\mathrm{new}}),
+\qquad K_I:[B,S_G,128],
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mi>G</mi></msub><mo>=</mo><msub><mi>S</mi><mrow><mi>G</mi><mo>,</mo><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">v</mi></mrow></mrow></msub><mo>+</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+S_G=S_{G,\mathrm{prev}}+S_{\mathrm{comp}}.
+</annotation></semantics></math></p>
+<p>图中的 Concat 表示逻辑历史接续，实现可向预分配缓存写入新增段；没有新增 Key 时，继续使用旧历史。</p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>Q</mi><mi>r</mi></msub><annotation encoding="application/x-tex">Q_r</annotation></semantics></math> 经投影后重排为 32 个 head，每个 head 128 维，再执行 Partial RoPE：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>Q</mi><mi>I</mi></msub><mo>=</mo><mo>PartialRoPE</mo><mrow><mo stretchy="true" form="prefix">(</mo><mo>reshape</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>Q</mi><mi>r</mi></msub><msubsup><mi>W</mi><mrow><mi>I</mi><mi>q</mi></mrow><mi>𝖳</mi></msubsup><mo>,</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>32</mn><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+Q_I=\operatorname{PartialRoPE}
+\left(\operatorname{reshape}(Q_rW_{Iq}^{\mathsf T},[B,S,32,128])\right).
+</annotation></semantics></math></p>
+<p>Query 和 Key 均旋转后 64 维，前 64 维直通。Query 使用当前 token 的绝对位置，Key 使用压缩组首个原始 token 的绝对位置。</p>
+<p>输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math> 经投影和缩放，生成 32 个 head 的融合权重：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>w</mi><mi>I</mi></msub><mo>=</mo><mfrac><mrow><mi>X</mi><msubsup><mi>W</mi><mrow><mi>I</mi><mi>w</mi></mrow><mi>𝖳</mi></msubsup></mrow><mrow><msqrt><mn>128</mn></msqrt><msqrt><mn>32</mn></msqrt></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>w</mi><mi>I</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>32</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+w_I=\frac{XW_{Iw}^{\mathsf T}}{\sqrt{128}\sqrt{32}},
+\qquad w_I:[B,S,32].
+</annotation></semantics></math></p>
+<p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mi>I</mi></msub><annotation encoding="application/x-tex">w_I</annotation></semantics></math> 不做 Softmax，直接用于后续 head 加权汇聚。</p>
+<p>评分前，检索 Query 和 Key 执行 FP4 量化—反量化模拟，仍以 BF16 存储；图与公式省略该精度处理步骤。</p>
+<h4 id="全历史评分">2.3.2 全历史评分</h4>
+<p>每个 Query head 与全部历史 Key 做点积，经过 ReLU，再沿 head 维加权求和：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mrow><mi>I</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>j</mi></mrow></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>d</mi><mo>=</mo><mn>0</mn></mrow><mn>127</mn></munderover><msub><mi>Q</mi><mrow><mi>I</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>d</mi></mrow></msub><msub><mi>K</mi><mrow><mi>I</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>j</mi><mo>,</mo><mi>d</mi></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>A</mi><mi>I</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>32</mn><mo>,</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+A_{I,b,i,h,j}
+=\sum_{d=0}^{127}Q_{I,b,i,h,d}K_{I,b,j,d},
+\qquad A_I:[B,S,32,S_G],
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>R</mi><mrow><mi>I</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>j</mi></mrow></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>h</mi><mo>=</mo><mn>0</mn></mrow><mn>31</mn></munderover><msub><mi>w</mi><mrow><mi>I</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>h</mi></mrow></msub><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>A</mi><mrow><mi>I</mi><mo>,</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>h</mi><mo>,</mo><mi>j</mi></mrow></msub><mo>,</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>R</mi><mi>I</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+R_{I,b,i,j}
+=\sum_{h=0}^{31}w_{I,b,i,h}\max(A_{I,b,i,h,j},0),
+\qquad R_I:[B,S,S_G].
+</annotation></semantics></math></p>
+<h4 id="因果-mask-与-top-k-选择">2.3.3 因果 Mask 与 Top-K 选择</h4>
+<p>设本次输入从绝对位置 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>p</mi><mn>0</mn></msub><annotation encoding="application/x-tex">p_0</annotation></semantics></math> 开始。对于本次输入中的 Query <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>，只有满足以下条件的压缩位置 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>j</mi><annotation encoding="application/x-tex">j</annotation></semantics></math> 可见：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>j</mi><mo>&lt;</mo><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><mrow><msub><mi>p</mi><mn>0</mn></msub><mo>+</mo><mi>i</mi><mo>+</mo><mn>1</mn></mrow><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+j&lt;\left\lfloor\frac{p_0+i+1}{2}\right\rfloor.
+</annotation></semantics></math></p>
+<p>其余评分设为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>−</mo><mi>∞</mi></mrow><annotation encoding="application/x-tex">-\infty</annotation></semantics></math>。从 Mask 后的评分中选择 Top-K，再按压缩位置升序排列：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>=</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>512</mn><mo>,</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>I</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>=</mo><mo>SortAscending</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mo>TopKIndices</mo><mi>k</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>R</mi><msub><mi>′</mi><mi>I</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+k=\min(512,S_G),
+\qquad
+I_{\mathrm{sorted}}
+=\operatorname{SortAscending}
+\left(\operatorname{TopKIndices}_k(R&#39;_I)\right).
+</annotation></semantics></math></p>
+<p>最后，有效索引加上 Local 数据源长度 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mi>L</mi></msub><annotation encoding="application/x-tex">S_L</annotation></semantics></math>，无效索引设为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>−</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">-1</annotation></semantics></math>，得到交给 2.4 的访问索引：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mi>G</mi></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>I</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>+</mo><msub><mi>S</mi><mi>L</mi></msub><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">有效位置</mtext><mo>,</mo></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mo>−</mo><mn>1</mn><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">无效位置</mtext><mo>,</mo></mtd></mtr></mtable></mrow><mspace width="2.0em"></mspace><msub><mi>I</mi><mi>G</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mi>k</mi><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="1.0em"></mspace><mtext mathvariant="normal">(INT32)</mtext><mi>.</mi></mrow><annotation encoding="application/x-tex">
+I_G=
+\begin{cases}
+I_{\mathrm{sorted}}+S_L,&amp;\text{有效位置},\\
+-1,&amp;\text{无效位置},
+\end{cases}
+\qquad I_G:[B,S,k]\quad\text{(INT32)}.
+</annotation></semantics></math></p>
+<p>早期 Query 的可见压缩历史可能不足 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>，因此实际有效索引数可以少于槽数。</p>
+<h3 id="local-与-global-kv-及索引合并">2.4 Local 与 Global KV 及索引合并</h3>
+<p><img src="assets/22_layer2_kv_index_merge.png?v=f678df14915c" alt="图 6：Global KV 更新、统一数据源与索引合并及有效 Gather" /></p>
+<p>本节更新 Global KV 历史，将它与 Local KV 拼接为统一数据源，再合并两路访问索引，读取每个 Query 对应的候选 KV。</p>
+<h4 id="global-kv-更新">2.4.1 Global KV 更新</h4>
+<p>未旋转的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">KV_{\mathrm{comp}}</annotation></semantics></math> 先执行 Partial RoPE：前 448 维直通，后 64 维按压缩组首个原始 token 的位置旋转：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mo>PartialRoPE</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV_{\mathrm{rot}}
+=\operatorname{PartialRoPE}(KV_{\mathrm{comp}}),
+\qquad KV_{\mathrm{rot}}:[B,S_{\mathrm{comp}},512].
+</annotation></semantics></math></p>
+<p>随后按每 16 个通道一组执行 FP4 量化模拟，结果仍以 BF16 保存，得到本次新增的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi>G</mi><mo>,</mo><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub></mrow><annotation encoding="application/x-tex">KV_{G,\mathrm{new}}</annotation></semantics></math>。</p>
+<p>将新增部分写入 Global KV 缓存，与旧历史共同形成当前有效历史：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mi>G</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mi>G</mi></msub><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>S</mi><mi>G</mi></msub><mo>=</mo><msub><mi>S</mi><mrow><mi>G</mi><mo>,</mo><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">v</mi></mrow></mrow></msub><mo>+</mo><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV_G:[B,S_G,512],
+\qquad S_G=S_{G,\mathrm{prev}}+S_{\mathrm{comp}}.
+</annotation></semantics></math></p>
+<p>图中的 Concat / Cache Update 表示逻辑历史接续，可在预分配缓存中原地更新；没有新增压缩 KV 时，继续使用旧历史。</p>
+<h4 id="数据源与访问索引合并">2.4.2 数据源与访问索引合并</h4>
+<p>图中右侧将 Local KV 放在前面、Global KV 放在后面，沿序列维拼接：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>V</mi><mo>=</mo><mo>Concat</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><msub><mi>V</mi><mi>L</mi></msub><mo>,</mo><mi>K</mi><msub><mi>V</mi><mi>G</mi></msub><mo>;</mo><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">m</mi></mrow><mo>=</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><mi>V</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><msub><mi>S</mi><mi>L</mi></msub><mo>+</mo><msub><mi>S</mi><mi>G</mi></msub><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+KV=\operatorname{Concat}(KV_L,KV_G;\mathrm{dim}=1),
+\qquad KV:[B,S_L+S_G,512].
+</annotation></semantics></math></p>
+<p>左侧根据 Query 的绝对位置、128-token 因果窗口和 Local 缓存布局，生成局部访问索引：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mi>L</mi></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><msub><mi>k</mi><mi>L</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>k</mi><mi>L</mi></msub><mo>≤</mo><mn>128</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+I_L:[B,S,k_L],\qquad k_L\le128.
+</annotation></semantics></math></p>
+<p>Global 索引 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>I</mi><mi>G</mi></msub><annotation encoding="application/x-tex">I_G</annotation></semantics></math> 来自 2.3，已经完成 Top-K 选择及 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mi>L</mi></msub><annotation encoding="application/x-tex">S_L</annotation></semantics></math> 偏移。将它与 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>I</mi><mi>L</mi></msub><annotation encoding="application/x-tex">I_L</annotation></semantics></math> 沿最后一维直接拼接：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>I</mi><mo>=</mo><mo>Concat</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>I</mi><mi>L</mi></msub><mo>,</mo><msub><mi>I</mi><mi>G</mi></msub><mo>;</mo><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">m</mi></mrow><mo>=</mo><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mi>I</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mi>K</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+I=\operatorname{Concat}(I_L,I_G;\mathrm{dim}=-1),
+\qquad I:[B,S,K],
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mo>=</mo><msub><mi>k</mi><mi>L</mi></msub><mo>+</mo><mi>k</mi><mo>≤</mo><mn>640</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>k</mi><mo>=</mo><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>512</mn><mo>,</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+K=k_L+k\le640,\qquad k=\min(512,S_G).
+</annotation></semantics></math></p>
+<p>统一数据源 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>V</mi></mrow><annotation encoding="application/x-tex">KV</annotation></semantics></math> 按 batch 共享，访问索引 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>I</mi><annotation encoding="application/x-tex">I</annotation></semantics></math> 则按 Query 独立组织。两路索引中的无效槽均保留为 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>−</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">-1</annotation></semantics></math>。</p>
+<h4 id="按有效索引-gather">2.4.3 按有效索引 Gather</h4>
+<p>根据统一索引生成有效性 Mask，并读取对应的 KV：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow><mrow><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>I</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>≥</mo><mn>0</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+\mathrm{Mask}_{b,i,t}=(I_{b,i,t}\ge0),
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow><mo>,</mo><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>t</mi><mo>,</mo><mo>:</mo></mrow></msub><mo>=</mo><mi>K</mi><msub><mi>V</mi><mrow><mi>b</mi><mo>,</mo><msub><mi>I</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>,</mo><mo>:</mo></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>I</mi><mrow><mi>b</mi><mo>,</mo><mi>i</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>≥</mo><mn>0</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+C_{\mathrm{win},b,i,t,:}
+=KV_{b,I_{b,i,t},:},
+\qquad I_{b,i,t}\ge0.
+</annotation></semantics></math></p>
+<p>逻辑上得到：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mi>K</mi><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mrow><mi mathvariant="normal">M</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">k</mi></mrow><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mi>K</mi><mo stretchy="true" form="postfix">]</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+C_{\mathrm{win}}:[B,S,K,512],
+\qquad \mathrm{Mask}:[B,S,K].
+</annotation></semantics></math></p>
+<p>无效槽由 Mask 屏蔽。每个 Query 最多使用 128 个 Local KV 和 512 个 Global KV，候选长度 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math> 对应 2.5 中的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">S_{\mathrm{win}}</annotation></semantics></math>。</p>
+<p>图中将 Gather 单独展开；官方参考实现把这一步融合在 <code>sparse_attn</code> 内核中，按统一索引分块读取 KV，直接参与后续注意力计算。</p>
+<h3 id="稀疏注意力计算与输出">2.5 稀疏注意力计算与输出</h3>
+<p><img src="assets/20_layer0_swa_mask_sink_softmax.png?v=3249e657b9c0" alt="图 7：复用 Layer 0 的 SWA mask、Sink Softmax 与共享 V 汇总示意" /></p>
+<p>本步骤与 <a href="https://absurdmirror.github.io/myBlog/models/deepseek-v4.1-flash/02-layer0.html#swa-maskattention-sink-与在线-softmax">Layer 0 第 4.2 节</a> 相比，唯一变化是输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">C_{\mathrm{win}}</annotation></semantics></math> 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">S_{\mathrm{win}}</annotation></semantics></math> 维度：每个 Query 对应的候选 KV 数由最多 128 增加到最多 640，特征维度仍为 512。除候选长度变化所对应的维度外，其余张量的 shape 和全部计算算法均保持一致，因此直接复用上图及原章节的推导。</p>
+<p>图中的 128-token SWA mask 对应 Local 分支；Global 候选的因果有效性由 2.3 的筛选与 2.4 的 Mask 保证。</p>
+<p>注意力结果随后按本层 RoPE 配置执行逆旋转，并经两级分组输出投影得到 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">O:[B,S,5120]</annotation></semantics></math>，结构沿用 <a href="https://absurdmirror.github.io/myBlog/models/deepseek-v4.1-flash/02-layer0.html#逆-rope-与两级分组输出投影">Layer 0 第 4.3 节</a>。</p>
+<h3 id="attention-资源分析">2.6 Attention 资源分析</h3>
+<p>本节统计 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X:[B,S,5120]</annotation></semantics></math> 到 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">O:[B,S,5120]</annotation></semantics></math> 的完整 Attention，包括 2.1—2.5，不含入口 mHC、5120 维 RMSNorm 和 MoE。</p>
+<h4 id="参数量与权重驻留">2.6.1 参数量与权重驻留</h4>
+<table>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th style="text-align: right;">逻辑参数量</th>
+<th style="text-align: right;">权重及 scale 字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Q / Local KV 生成</td>
+<td style="text-align: right;">51,119,872</td>
+<td style="text-align: right;">51,171,584</td>
+</tr>
+<tr class="even">
+<td>Compressor</td>
+<td style="text-align: right;">5,243,392</td>
+<td style="text-align: right;">20,972,544</td>
+</tr>
+<tr class="odd">
+<td>Indexer</td>
+<td style="text-align: right;">5,472,384</td>
+<td style="text-align: right;">5,707,008</td>
+</tr>
+<tr class="even">
+<td>Global KV 更新、索引合并与 Gather</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr class="odd">
+<td>Attention Sink 与输出投影</td>
+<td style="text-align: right;">75,497,536</td>
+<td style="text-align: right;">109,093,120</td>
+</tr>
+<tr class="even">
+<td><strong>合计</strong></td>
+<td style="text-align: right;"><strong>137,333,184</strong></td>
+<td style="text-align: right;"><strong>186,944,256</strong></td>
+</tr>
+</tbody>
+</table>
+<p>权重驻留约为 <strong>178.284 MiB</strong>。逻辑参数量不包含量化 scale；驻留字节按参考实现的 FP8、BF16、FP32 存储类型计算，并包含 FP8 scale。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L670-L903">官方参数与 dtype 定义</a></p>
+<h4 id="前向计算量">2.6.2 前向计算量</h4>
+<p>沿用 Layer 0 的数学计数口径，加、减、乘各计一次；除法、exp、比较、rsqrt、量化、Top-K 和索引操作另列。</p>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><annotation encoding="application/x-tex">S_{\mathrm{comp}}</annotation></semantics></math> 表示本次新增压缩 KV 数，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mi>G</mi></msub><annotation encoding="application/x-tex">S_G</annotation></semantics></math> 表示累计压缩历史长度，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>L</mi><mo accent="true">¯</mo></mover><annotation encoding="application/x-tex">\overline L</annotation></semantics></math> 表示每个 Query 实际参与主 Attention 的平均有效 KV 数，最多为 640。</p>
+<table>
+<colgroup>
+<col style="width: 42%" />
+<col style="width: 57%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th style="text-align: right;">加 / 减 / 乘次数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>主 Attention：Q / Local KV 生成至输出投影</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>253182466</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">BS(253182466+131200\overline L)</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Compressor</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10484736</mn><mi>B</mi><mi>S</mi><mo>+</mo><mn>5121</mn><mi>B</mi><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">10484736BS+5121BS_{\mathrm{comp}}</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>Indexer</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10815488</mn><mi>B</mi><mi>S</mi><mo>+</mo><mn>131649</mn><mi>B</mi><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>+</mo><mn>8223</mn><mi>B</mi><mi>S</mi><msub><mi>S</mi><mi>G</mi></msub></mrow><annotation encoding="application/x-tex">10815488BS+131649BS_{\mathrm{comp}}+8223BS S_G</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Global KV RoPE</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>192</mn><mi>B</mi><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">192BS_{\mathrm{comp}}</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>已有压缩历史，即 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mi>G</mi></msub><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">S_G&gt;0</annotation></semantics></math> 时，合计为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mtable><mtr><mtd columnalign="right" style="text-align: right"><msub><mi>C</mi><mrow><mi mathvariant="normal">A</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mrow></mrow></mtd><mtd columnalign="left" style="text-align: left"><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>274482690</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>+</mo><mn>8223</mn><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>136962</mn><mi>B</mi><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mi>.</mi></mtd></mtr></mtable></menclose><annotation encoding="application/x-tex">
+\boxed{
+\begin{aligned}
+C_{\mathrm{Attention}}
+={}&amp;BS\left(274482690+131200\overline L+8223S_G\right)\\
+&amp;+136962BS_{\mathrm{comp}}.
+\end{aligned}
+}
+</annotation></semantics></math></p>
+<p>主 Attention 最多访问 640 个候选，但 Indexer 仍对全部 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mi>G</mi></msub><annotation encoding="application/x-tex">S_G</annotation></semantics></math> 个压缩位置评分，因此其计算量随压缩历史长度增长。</p>
+<p>当 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mi>G</mi></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">S_G=0</annotation></semantics></math> 时，参考实现跳过 Indexer，此时合计为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">A</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>263667202</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+C_{\mathrm{Attention}}
+=BS(263667202+131200\overline L).
+</annotation></semantics></math></p>
+<p>本次 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">S_{\mathrm{comp}}=0</annotation></semantics></math> 并不意味着跳过 Indexer：只要已有压缩历史，仍需生成检索 Query 并评分。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L964-L1005">官方执行分支</a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L792-L822">评分过程</a></p>
+<p>以上统计数学前向运算，不等同于在线 Softmax 内核的实际指令数；分块重标定、padding 和量化等执行开销未并入主公式。</p>
+<h4 id="required-global-memory-理论下界">2.6.3 Required Global Memory 理论下界</h4>
+<p>按预分配最大 batch <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mo>max</mo></msub><annotation encoding="application/x-tex">B_{\max}</annotation></semantics></math> 和最大原始 token 历史容量 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mo>max</mo></msub><annotation encoding="application/x-tex">S_{\max}</annotation></semantics></math>，持久数据为：</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 30%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>对象</th>
+<th>Shape / dtype</th>
+<th style="text-align: right;">字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Local KV Cache</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><mn>128</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B_{\max},128,512]</annotation></semantics></math> BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>131072</mn><msub><mi>B</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">131072B_{\max}</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Global KV Cache</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><mo stretchy="false" form="prefix">⌊</mo><msub><mi>S</mi><mo>max</mo></msub><mi>/</mi><mn>2</mn><mo stretchy="false" form="postfix">⌋</mo><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B_{\max},\lfloor S_{\max}/2\rfloor,512]</annotation></semantics></math> BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1024</mn><msub><mi>B</mi><mo>max</mo></msub><mo stretchy="false" form="prefix">⌊</mo><msub><mi>S</mi><mo>max</mo></msub><mi>/</mi><mn>2</mn><mo stretchy="false" form="postfix">⌋</mo></mrow><annotation encoding="application/x-tex">1024B_{\max}\lfloor S_{\max}/2\rfloor</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>Index Key Cache</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><mo stretchy="false" form="prefix">⌊</mo><msub><mi>S</mi><mo>max</mo></msub><mi>/</mi><mn>2</mn><mo stretchy="false" form="postfix">⌋</mo><mo>,</mo><mn>128</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B_{\max},\lfloor S_{\max}/2\rfloor,128]</annotation></semantics></math> BF16</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>256</mn><msub><mi>B</mi><mo>max</mo></msub><mo stretchy="false" form="prefix">⌊</mo><msub><mi>S</mi><mo>max</mo></msub><mi>/</mi><mn>2</mn><mo stretchy="false" form="postfix">⌋</mo></mrow><annotation encoding="application/x-tex">256B_{\max}\lfloor S_{\max}/2\rfloor</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>Compressor 两路状态</td>
+<td>各 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>B</mi><mo>max</mo></msub><mo>,</mo><mn>2</mn><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B_{\max},2,512]</annotation></semantics></math> FP32</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>8192</mn><msub><mi>B</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">8192B_{\max}</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>RoPE 表</td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>S</mi><mo>max</mo></msub><mo>,</mo><mn>32</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[S_{\max},32]</annotation></semantics></math> Complex64</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">256S_{\max}</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>Attention 与 Indexer 共用的 RoPE 表只计一次；缓存有效切片作为视图，不重复分配空间。</p>
+<p>BF16 输入和输出分别保留，边界空间合计为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">I</mi><mi mathvariant="normal">O</mi></mrow></msub><mo>=</mo><mn>2</mn><mo>×</mo><mi>B</mi><mi>S</mi><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2</mn><mo>=</mo><mn>20480</mn><mi>B</mi><mi>S</mi><mi>.</mi></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{IO}}
+=2\times BS\times5120\times2
+=20480BS.
+</annotation></semantics></math></p>
+<p>内部张量按理想融合处理，整个 Attention 的边界空间下界为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mtable><mtr><mtd columnalign="right" style="text-align: right"><msub><mi>M</mi><mrow><mi mathvariant="normal">A</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mrow></mrow></mtd><mtd columnalign="left" style="text-align: left"><mn>186944256</mn><mo>+</mo><mn>20480</mn><mi>B</mi><mi>S</mi></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>139264</mn><msub><mi>B</mi><mo>max</mo></msub></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>1280</mn><msub><mi>B</mi><mo>max</mo></msub><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><msub><mi>S</mi><mo>max</mo></msub><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub><mspace width="1.0em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mi>.</mi></mtd></mtr></mtable></menclose><annotation encoding="application/x-tex">
+\boxed{
+\begin{aligned}
+M_{\mathrm{Attention,min}}
+={}&amp;186944256+20480BS\\
+&amp;+139264B_{\max}\\
+&amp;+1280B_{\max}\left\lfloor\frac{S_{\max}}2\right\rfloor\\
+&amp;+256S_{\max}
+\quad\mathrm{Byte}.
+\end{aligned}
+}
+</annotation></semantics></math></p>
+<p>这里不再叠加各子模块的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>Q</mi><mi>r</mi></msub><annotation encoding="application/x-tex">Q_r</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><msub><mi>V</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">KV_{\mathrm{comp}}</annotation></semantics></math> 边界项，避免重复计数。该式采用理想融合口径，参考代码实际物化的临时量另计。</p>
+<h4 id="临时空间与拼接访存">2.6.4 临时空间与拼接访存</h4>
+<p>参考实现会实际拼接完整 KV 数据源和访问索引。Indexer 也会生成完整历史评分；按 BF16 激活路径，各临时量的体积为：</p>
+<table>
+<thead>
+<tr class="header">
+<th>临时量</th>
+<th style="text-align: right;">字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>拼接后的 KV 数据源</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1024</mn><mi>B</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>S</mi><mi>L</mi></msub><mo>+</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">1024B(S_L+S_G)</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>拼接后的访问索引</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>4</mn><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>k</mi><mi>L</mi></msub><mo>+</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">4BS(k_L+k)</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>Indexer head 评分 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>A</mi><mi>I</mi></msub><annotation encoding="application/x-tex">A_I</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>64</mn><mi>B</mi><mi>S</mi><msub><mi>S</mi><mi>G</mi></msub></mrow><annotation encoding="application/x-tex">64BS S_G</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>ReLU 后的 head 加权乘积</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>64</mn><mi>B</mi><mi>S</mi><msub><mi>S</mi><mi>G</mi></msub></mrow><annotation encoding="application/x-tex">64BS S_G</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>汇聚评分 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>R</mi><mi>I</mi></msub><annotation encoding="application/x-tex">R_I</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2</mn><mi>B</mi><mi>S</mi><msub><mi>S</mi><mi>G</mi></msub></mrow><annotation encoding="application/x-tex">2BS S_G</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>这些张量存在于不同执行阶段，不能直接全部相加作为峰值；Top-K、排序及工作区还会占用额外空间。</p>
+<p>两次拼接新增的输出空间为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mo mathvariant="normal">,</mo><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></msub><mo>=</mo><mn>1024</mn><mi>B</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>S</mi><mi>L</mi></msub><mo>+</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><mn>4</mn><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>k</mi><mi>L</mi></msub><mo>+</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{Concat,new}}
+=1024B(S_L+S_G)+4BS(k_L+k).
+</annotation></semantics></math></p>
+<p>完整读取输入、写出结果各一次，对应逻辑读写量为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mn>2048</mn><mi>B</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>S</mi><mi>L</mi></msub><mo>+</mo><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><mn>8</mn><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>k</mi><mi>L</mi></msub><mo>+</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="1.0em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+T_{\mathrm{Concat}}
+=2048B(S_L+S_G)+8BS(k_L+k)
+\quad\mathrm{Byte}.
+</annotation></semantics></math></p>
+<p><code>Cwin</code> 由 Attention 内核按索引分块读取，不再额外计一份完整的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><msub><mi>k</mi><mi>L</mi></msub><mo>+</mo><mi>k</mi><mo>,</mo><mn>512</mn><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[B,S,k_L+k,512]</annotation></semantics></math> Global Memory 张量。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1016-L1022">官方拼接与内核调用</a></p>
+<h2 id="继承的-mhcrmsnorm-与-moe">3. 继承的 mHC、RMSNorm 与 MoE</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>模块</th>
+<th>Layer 2 中的行为</th>
+<th>已有推导</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Attention 侧 mHC 系数生成</td>
+<td>由本层四路残差生成 pre/post/comb</td>
+<td>Layer 0 第 2 节</td>
+</tr>
+<tr class="even">
+<td>第一次 <code>hc_pre</code></td>
+<td>使用 Layer 1 MoE 传来的动态 <code>pre_next</code></td>
+<td>Layer 1 第 3 节</td>
+</tr>
+<tr class="odd">
+<td>两个入口 RMSNorm</td>
+<td>5120 维，独立可学习缩放参数</td>
+<td>Layer 0 第 3 节</td>
+</tr>
+<tr class="even">
+<td>Attention <code>hc_post</code></td>
+<td>将本层 Attention 输出融入四路残差</td>
+<td>Layer 0 第 2 节</td>
+</tr>
+<tr class="odd">
+<td>MoE</td>
+<td>384 个 routed experts 中选 6 个，另有 1 个 shared expert</td>
+<td>Layer 0 第 5 节</td>
+</tr>
+<tr class="even">
+<td>MoE 侧 mHC 与输出</td>
+<td>输出四路残差；<code>ffn_pre</code> 传给 Layer 3</td>
+<td>Layer 0 第 2 节及 Layer 1 第 3 节</td>
+</tr>
+</tbody>
+</table>
+<p>各层参数独立，推导见 <a href="https://absurdmirror.github.io/myBlog/models/deepseek-v4.1-flash/02-layer0.html">Layer 0</a> 和 <a href="https://absurdmirror.github.io/myBlog/models/deepseek-v4.1-flash/03-layer1.html">Layer 1</a>。</p>
+<h2 id="layer-2-整层汇总">4. Layer 2 整层汇总</h2>
+<p>本章将第 2.6 节的完整 Attention 与 mHC、两个入口 RMSNorm、MoE 合并，统一核算整层参数、计算量和空间。</p>
+<h3 id="参数量与权重驻留-1">4.1 参数量与权重驻留</h3>
+<p>按单卡完整参数与参考实现的存储类型统计：</p>
+<table>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th style="text-align: right;">逻辑参数量</th>
+<th style="text-align: right;">权重及 scale 字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Attention、MoE 两套 mHC</td>
+<td style="text-align: right;">983,094</td>
+<td style="text-align: right;">3,932,376</td>
+</tr>
+<tr class="even">
+<td>两个入口 RMSNorm</td>
+<td style="text-align: right;">10,240</td>
+<td style="text-align: right;">20,480</td>
+</tr>
+<tr class="odd">
+<td>完整压缩稀疏 Attention</td>
+<td style="text-align: right;">137,333,184</td>
+<td style="text-align: right;">186,944,256</td>
+</tr>
+<tr class="even">
+<td>MoE FFN</td>
+<td style="text-align: right;">13,626,901,248</td>
+<td style="text-align: right;">7,258,804,992</td>
+</tr>
+<tr class="odd">
+<td><strong>Layer 2 合计</strong></td>
+<td style="text-align: right;"><strong>13,765,227,766</strong></td>
+<td style="text-align: right;"><strong>7,449,702,104</strong></td>
+</tr>
+</tbody>
+</table>
+<p>整层权重及 scale 驻留约为 <strong>6.938 GiB</strong>。相对 Layer 0，新增的 Compressor 和 Indexer 共增加 10,715,776 个逻辑参数、26,679,552 Byte；MoE 仍按完整专家池统计。</p>
+<h3 id="整层计算量">4.2 整层计算量</h3>
+<p>沿用第 2.6 节的数学加、减、乘计数口径：</p>
+<table>
+<thead>
+<tr class="header">
+<th>部分</th>
+<th style="text-align: right;">加 / 减 / 乘次数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>两套 mHC</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>2489802</mn><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">2489802BS</annotation></semantics></math></td>
+</tr>
+<tr class="even">
+<td>两个入口 RMSNorm</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>40962</mn><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">40962BS</annotation></semantics></math></td>
+</tr>
+<tr class="odd">
+<td>完整压缩稀疏 Attention</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mrow><mi mathvariant="normal">A</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi></mrow></msub><annotation encoding="application/x-tex">C_{\mathrm{Attention}}</annotation></semantics></math>，见第 2.6.2 节</td>
+</tr>
+<tr class="even">
+<td>MoE FFN</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>499425676</mn><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">499425676BS</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>已有压缩历史，即 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mi>G</mi></msub><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">S_G&gt;0</annotation></semantics></math> 时，整层合计为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mtable><mtr><mtd columnalign="right" style="text-align: right"><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">2</mn></mrow></msub><mo>=</mo><mrow></mrow></mtd><mtd columnalign="left" style="text-align: left"><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>776439130</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>+</mo><mn>8223</mn><msub><mi>S</mi><mi>G</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>136962</mn><mi>B</mi><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mi>.</mi></mtd></mtr></mtable></menclose><annotation encoding="application/x-tex">
+\boxed{
+\begin{aligned}
+C_{\mathrm{Layer2}}
+={}&amp;BS\left(776439130+131200\overline L+8223S_G\right)\\
+&amp;+136962BS_{\mathrm{comp}}.
+\end{aligned}
+}
+</annotation></semantics></math></p>
+<p>其中 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><annotation encoding="application/x-tex">S_{\mathrm{comp}}</annotation></semantics></math> 为本次新增压缩 KV 数，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>S</mi><mi>G</mi></msub><annotation encoding="application/x-tex">S_G</annotation></semantics></math> 为累计压缩历史长度，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>L</mi><mo accent="true">¯</mo></mover><annotation encoding="application/x-tex">\overline L</annotation></semantics></math> 为每个 Query 的平均有效候选 KV 数。</p>
+<p>当 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mi>G</mi></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">S_G=0</annotation></semantics></math> 时，Indexer 被跳过，整层合计为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">2</mn></mrow></msub><mo>=</mo><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>765623642</mn><mo>+</mo><mn>131200</mn><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow><mi>.</mi></mrow><annotation encoding="application/x-tex">
+C_{\mathrm{Layer2}}
+=BS\left(765623642+131200\overline L\right).
+</annotation></semantics></math></p>
+<p>除法、exp、比较、rsqrt、量化、Top-K 和索引等操作不并入上述主项；该统计不等同于 GPU 内核的实际指令数。</p>
+<h3 id="持久状态与整层边界空间">4.3 持久状态与整层边界空间</h3>
+<p>整层持久状态由 Local KV Cache、Global KV Cache、Index Key Cache、Compressor 两路状态及 RoPE 表组成，容量与字节数见第 2.6.3 节，整层只计一份：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>=</mo><mn>139264</mn><msub><mi>B</mi><mo>max</mo></msub><mo>+</mo><mn>1280</mn><msub><mi>B</mi><mo>max</mo></msub><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><msub><mi>S</mi><mo>max</mo></msub><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow><mo>+</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{persistent}}
+=139264B_{\max}
++1280B_{\max}\left\lfloor\frac{S_{\max}}2\right\rfloor
++256S_{\max}.
+</annotation></semantics></math></p>
+<p>输入、输出各包含四路 BF16 残差与四个 FP32 汇聚系数，完整层边界空间为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">y</mi></mrow></msub><mo>=</mo><mn>2</mn><mi>B</mi><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>4</mn><mo>×</mo><mn>5120</mn><mo>×</mo><mn>2</mn><mo>+</mo><mn>4</mn><mo>×</mo><mn>4</mn><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>81952</mn><mi>B</mi><mi>S</mi><mi>.</mi></mrow><annotation encoding="application/x-tex">
+M_{\mathrm{boundary}}
+=2BS\left(4\times5120\times2+4\times4\right)
+=81952BS.
+</annotation></semantics></math></p>
+<p>按完整边界输入输出分别保留、层内中间张量理想融合的口径，整层空间下界为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><menclose notation="box"><mtable><mtr><mtd columnalign="right" style="text-align: right"><msub><mi>M</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">2</mn><mo mathvariant="normal">,</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mrow></mrow></mtd><mtd columnalign="left" style="text-align: left"><mn>7449702104</mn><mo>+</mo><mn>81952</mn><mi>B</mi><mi>S</mi></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>139264</mn><msub><mi>B</mi><mo>max</mo></msub></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>1280</mn><msub><mi>B</mi><mo>max</mo></msub><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><msub><mi>S</mi><mo>max</mo></msub><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><mo>+</mo><mn>256</mn><msub><mi>S</mi><mo>max</mo></msub><mspace width="1.0em"></mspace><mrow><mi mathvariant="normal">B</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow><mi>.</mi></mtd></mtr></mtable></menclose><annotation encoding="application/x-tex">
+\boxed{
+\begin{aligned}
+M_{\mathrm{Layer2,min}}
+={}&amp;7449702104+81952BS\\
+&amp;+139264B_{\max}\\
+&amp;+1280B_{\max}\left\lfloor\frac{S_{\max}}2\right\rfloor\\
+&amp;+256S_{\max}
+\quad\mathrm{Byte}.
+\end{aligned}
+}
+</annotation></semantics></math></p>
+<p>Attention 的 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>O</mi><annotation encoding="application/x-tex">O</annotation></semantics></math> 属于层内中间量，不再叠加第 2.6 节的 Attention 边界空间。参考实现物化的 KV 拼接、Indexer 评分及其他工作区另计，不能把该下界当作实际峰值显存。</p>
+<h3 id="一百万-token-历史的-decode-示例">4.4 一百万 token 历史的 Decode 示例</h3>
+<p>设本次处理后历史刚好达到一百万 token，且：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>B</mi><mo>=</mo><msub><mi>B</mi><mo>max</mo></msub><mo>=</mo><mn>1</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>S</mi><mo>=</mo><mn>1</mn><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>S</mi><mo>max</mo></msub><mo>=</mo><mn>1000000</mn><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>p</mi><mn>0</mn></msub><mo>=</mo><mn>999999</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+B=B_{\max}=1,\qquad S=1,\qquad
+S_{\max}=1000000,\qquad p_0=999999.
+</annotation></semantics></math></p>
+<p>本次恰好完成一组两 token 压缩，因此：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>=</mo><mn>1</mn><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>S</mi><mi>G</mi></msub><mo>=</mo><mn>500000</mn><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>S</mi><mi>L</mi></msub><mo>=</mo><msub><mi>k</mi><mi>L</mi></msub><mo>=</mo><mn>128</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>k</mi><mo>=</mo><mn>512</mn><mo>,</mo><mspace width="2.0em"></mspace><mover><mi>L</mi><mo accent="true">¯</mo></mover><mo>=</mo><mn>640</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+S_{\mathrm{comp}}=1,\qquad S_G=500000,\qquad
+S_L=k_L=128,\qquad k=512,\qquad\overline L=640.
+</annotation></semantics></math></p>
+<table>
+<thead>
+<tr class="header">
+<th>项目</th>
+<th style="text-align: right;">字节数</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>整层权重及 scale</td>
+<td style="text-align: right;">7,449,702,104</td>
+</tr>
+<tr class="even">
+<td>Local KV Cache</td>
+<td style="text-align: right;">131,072</td>
+</tr>
+<tr class="odd">
+<td>Global KV Cache</td>
+<td style="text-align: right;">512,000,000</td>
+</tr>
+<tr class="even">
+<td>Index Key Cache</td>
+<td style="text-align: right;">128,000,000</td>
+</tr>
+<tr class="odd">
+<td>Compressor 两路预留状态</td>
+<td style="text-align: right;">8,192</td>
+</tr>
+<tr class="even">
+<td>RoPE 表</td>
+<td style="text-align: right;">256,000,000</td>
+</tr>
+<tr class="odd">
+<td>整层边界输入输出</td>
+<td style="text-align: right;">81,952</td>
+</tr>
+<tr class="even">
+<td><strong>理想融合边界合计</strong></td>
+<td style="text-align: right;"><strong>8,345,923,320，约 7.773 GiB</strong></td>
+</tr>
+</tbody>
+</table>
+<p>代入整层计算量公式，本次加、减、乘主项为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mn mathvariant="normal">2</mn></mrow></msub><mo>=</mo><mn>4972044092</mn><mi>.</mi></mrow><annotation encoding="application/x-tex">
+C_{\mathrm{Layer2}}=4972044092.
+</annotation></semantics></math></p>
+<p>此时主 Attention 最多读取 640 个候选 KV，Indexer 仍评分 500,000 个压缩位置。参考实现的两次拼接另分配 512,133,632 Byte，单个 BF16 head 评分张量另占 32,000,000 Byte；这些是不同阶段的临时量，不直接相加作为整层峰值。</p>
+<h3 id="输出与跨层状态">4.5 输出与跨层状态</h3>
+<p>Layer 2 向 Layer 3 输出四路残差 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>X</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>B</mi><mo>,</mo><mi>S</mi><mo>,</mo><mn>4</mn><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">X_{\mathrm{out}}:[B,S,4,5120]</annotation></semantics></math>（BF16），并将 MoE 侧的 <code>ffn_pre:[B,S,4]</code>（FP32）作为 Layer 3 的 <code>pre_next</code>。</p>
+<p>Local KV Cache 与 Compressor 状态用于本层后续 Decode；Global KV 和 Index Key 缓存还按配置供后续层共享。缓存与 RoPE 表按持久状态管理，不作为上述层边界输出重复计数。</p>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-11-04<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/04-layer2.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
