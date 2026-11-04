@@ -341,6 +341,165 @@
         "article_figure": 3,
         "updated": "2026-11-02"
       }
+    },
+    {
+      "id": "layer2-overview",
+      "file": "17_layer2_overview.png",
+      "sha256": "6cc3f18169315d99502677bf9d3d7e1676a2be2ba3dcd7ff00fd37993a7e083d",
+      "bytes": 205926,
+      "width": 2422,
+      "height": 1688,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-against-current-draft",
+      "notes": [
+        "图文语义已对照固定 revision 5254448103b6254fc646dacbca1cbbf20e9216c1 的官方实现复核。",
+        "普通OP浅绿，改动的Sparse Attention浅橙；Q/Local KV为RoPE调整而非整体新增。",
+        "attn_pre返回路径与H分发带相交但不相连。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/overview_color_candidates_20261102/layer2_overview.py",
+        "source_sha256": "90c702e7496232c912918b15fd592ccdee697be8e6aa1e7c88d98566983befa8",
+        "article_figure": 1,
+        "updated": "2026-11-02"
+      }
+    },
+    {
+      "id": "layer2-compressor",
+      "file": "16_layer2_compressor.png",
+      "sha256": "de5c122fe0edf50eaa601cca00f20a17dffd3ab864be2a692b5543907bd80f51",
+      "bytes": 160824,
+      "width": 2933,
+      "height": 800,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-against-current-draft",
+      "notes": [
+        "采用用户确认的公式维度版；投影权重统一为[输出,输入]=[512,5120]，gamma为一维[512]。",
+        "上KV下Z双路；Split / Reshape同时输出完整两token分组与0或1token尾部，两个bufprime均由对应算子输出。",
+        "KV2/Z2/A按[B×Scomp,2,512]展示；Softmax和加权汇聚均沿长度2的token轴，RMSNorm后输出未执行RoPE。",
+        "符号维度的数值参考仅用于绘图，不限制算法中的B与S。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "diagram-sources/layer2_compressor_split_reshape.py",
+        "source_sha256": "4e07a58ed3fc507ae0f0ec5291a515f3b048734f7bdcbaff48092ca98a14bd64",
+        "artifact": ".build/layer2_compressor.split-reshape-20261103.png",
+        "article_figure": 4,
+        "updated": "2026-11-03"
+      }
+    },
+    {
+      "id": "layer2-q-local-kv",
+      "file": "19_layer2_q_local_kv.png",
+      "sha256": "228ee456a6ce4fc6113c5d3cd5a2bd936fa3dda01b42feb9d263e6a0b45d5f99",
+      "bytes": 138552,
+      "width": 2769,
+      "height": 1204,
+      "selection": "user-requested-rope-highlight",
+      "semantic_review": "reviewed-against-current-draft",
+      "notes": [
+        "复制Layer0最新确认版源文件，仅高亮两处RoPE算子，输入名称统一为X。",
+        "保留原图布局、尺寸与连线；缓存及Cwin只表示Local窗口。",
+        "Layer0原始源码及采用PNG保持不变。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer2_q_local_kv_api.py",
+        "source_sha256": "7760b84b236cf3d87be7c15b7e7e95b45171151d986a97883b91366992e86763",
+        "artifact": ".build/layer2_q_local_kv_api.png",
+        "article_figure": 3,
+        "updated": "2026-11-03"
+      }
+    },
+    {
+      "id": "layer2-indexer",
+      "file": "21_layer2_indexer.png",
+      "sha256": "bb529e1d924e07379a5736b85806342084ce82ea19795e4901ddf30a689547db",
+      "bytes": 348228,
+      "width": 2549,
+      "height": 2300,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-against-current-draft",
+      "notes": [
+        "三路生成Index Query、Index Key和head权重；128维独立Key缓存与Global KV分开。",
+        "全历史点积、ReLU后head加权汇聚、因果Mask、Top-K、位置升序及Local偏移。",
+        "采用2026-11-04三个阶段统一浅紫框版本；45节点、39连接，各步中间矩阵完整展开。",
+        "输出INT32索引，历史接续表示逻辑有效视图；正式图与debug图已核对。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer2_indexer.py",
+        "source_sha256": "160b67ef0c1cf9b372768a85b9695cbc94c4904f6a762d4445a352ad51bc046a",
+        "artifact": ".build/layer2_indexer.png",
+        "article_figure": 5,
+        "updated": "2026-11-04"
+      }
+    },
+    {
+      "id": "layer2-kv-index-merge",
+      "file": "22_layer2_kv_index_merge.png",
+      "sha256": "f678df14915c045de055b388246feed377a243bbe8909f81de20e1a66b828228",
+      "bytes": 247272,
+      "width": 2265,
+      "height": 1375,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-against-current-draft",
+      "notes": [
+        "三个分组等宽；Global KV更新、数据源与索引合并、有效Gather。",
+        "IG已包含Local偏移；Gather位于I下方，KV从右侧输入，Cwin和Mask从左侧输出。",
+        "Gather为逻辑展开，实际读取融合于Attention内核；25节点、19连接。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer2_kv_index_merge.py",
+        "source_sha256": "42afa02044840c6f51067fe3dc28a940f6655dbb5c55f57917e1958e06d66916",
+        "artifact": ".build/layer2_kv_index_merge.png",
+        "article_figure": 6,
+        "updated": "2026-11-04"
+      }
+    },
+    {
+      "id": "layer2-attention-pipeline",
+      "file": "18_layer2_attention_pipeline.png",
+      "sha256": "092a2e22899d215f5aa26ec871c892d60f774992f1fd1c43ad24284531dc2119",
+      "bytes": 160625,
+      "width": 3256,
+      "height": 832,
+      "selection": "user-approved-python-api",
+      "semantic_review": "reviewed-against-current-draft",
+      "notes": [
+        "采用用户确认的五模块总图，保持布局与连线不变。",
+        "2.4包含逻辑Gather，Cwin与Mask分别进入2.5；2.5内部Oprime与最终5120维输出区分标注。",
+        "参数封装在主框内，逻辑维度按图中公式标注。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer2_attention_pipeline.py",
+        "source_sha256": "b8ee074ba67f675e6a980575edb9eea28edf495753267fa4f2a9b0dca9c08c04",
+        "artifact": ".build/layer2_attention_pipeline.png",
+        "article_figure": 2,
+        "updated": "2026-11-03"
+      }
+    },
+    {
+      "id": "layer2-swa-reused",
+      "file": "20_layer0_swa_mask_sink_softmax.png",
+      "sha256": "3249e657b9c0aeda6fe8441bfbbf445e26192aa4b54a76d0c7b02720cbb6486b",
+      "bytes": 81926,
+      "width": 2919,
+      "height": 641,
+      "selection": "user-approved-reuse",
+      "semantic_review": "reviewed-against-fixed-reference",
+      "notes": [
+        "复用当前已发布 Layer 0 的 4.2 配图；Local mask 与 Global 有效性区别见相邻正文。"
+      ],
+      "rendering": {
+        "tool": "tensor-python-api",
+        "source": "examples/layer0_swa_sink_api.py",
+        "source_sha256": "426cbe34228c487983ddf8ca8e1eb7dd42602113a6d596dfad21a5180dec96c8",
+        "article_figure": 7,
+        "updated": "2026-11-04"
+      }
     }
   ]
 }

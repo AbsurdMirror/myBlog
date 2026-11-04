@@ -1,7 +1,7 @@
 ---
 title: 图解技术笔记
 status: published
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 # 图解技术笔记
@@ -26,11 +26,15 @@ updated: 2026-11-02
 
 [阅读 Layer 0：四路残差、局部注意力与 MoE](models/deepseek-v4.1-flash/02-layer0.md)
 
-当前篇章含十二张手绘配图：整层结构、mHC 三步计算、RMSNorm、SWA 的窗口 KV / sink softmax / 两级输出投影，以及 MoE 的 Router / 专家参数索引 / 专家计算。正文已补齐 Layer 0 整层参数、计算、显存和状态汇总；复杂图可以点开放大，公式和 shape 同时保留为文本。
+Layer 0 配图覆盖：整层结构、mHC 三步计算、RMSNorm、SWA 的窗口 KV / sink softmax / 两级输出投影，以及 MoE 的 Router / 专家参数索引 / 专家计算。正文已补齐 Layer 0 整层参数、计算、显存和状态汇总；复杂图可以点开放大，公式和 shape 同时保留为文本。
 
-[系列目录、六篇阅读规划与资料说明](models/deepseek-v4.1-flash/index.md)
+[系列目录、阅读规划与资料说明](models/deepseek-v4.1-flash/index.md)
 
-系列规划为约六篇正文＋一个目录页，目前 Layer 0 已发布，其他篇目待后续讨论逐步展开。
+[阅读 Layer 1：从 Engram 写入到局部注意力与 MoE](models/deepseek-v4.1-flash/03-layer1.md)
+
+[阅读 Layer 2：从局部注意力到压缩稀疏注意力与 MoE](models/deepseek-v4.1-flash/04-layer2.md)
+
+Layer 1 展开 Engram；Layer 2 展开 Compressor、Indexer、Local / Global KV 与稀疏 Attention，并汇总参数、计算与显存。三篇正文均已发布，其余篇目逐步展开。
 
 ## 旧文归档
 
