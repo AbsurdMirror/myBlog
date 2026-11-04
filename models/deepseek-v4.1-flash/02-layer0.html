@@ -17,6 +17,8 @@
 </ul>
 <p>混合系数生成分支读取当前子层的四路输入。生成的 <strong>post、comb 用于当前出口，pre 用于下一子层入口</strong>：Attention 侧的 pre 交给本层 MoE，MoE 侧的 pre 交给下一层 Attention。</p>
 <h2 id="mhc">2. mHC</h2>
+<p><img src="assets/chapter2_mhc_overview.png?v=646af2116042" alt="第 2 章总览：mHC 数据流总览" /></p>
+<p>上方分支生成本次混合系数：post、comb 用于当前出口，pre_out 供下一子层入口；下方展示 pre_in 汇聚、子层计算与残差融合。灰色块表示本章之外的上下文。</p>
 <h3 id="四路输入生成-raw-mixes">2.1 四路输入生成 raw mixes</h3>
 <p><img src="assets/02_mhc_mixes_raw.png?v=9d001453c524" alt="图 2：四路输入生成 raw mixes" /></p>
 <p>四路输入经过展平、RMS 缩放与联合投影，生成混合系数的原始值。以下 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math> 为展平后的 token 索引，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math> 为特征元素索引，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>⊙</mo><annotation encoding="application/x-tex">\odot</annotation></semantics></math> 表示逐元素相乘；线性权重按 <code>[输出,输入]</code> 排列。</p>
@@ -710,6 +712,8 @@ M_{\mathrm{Layer0\ Norm,min}}(B,S)=20\,\mathrm{KiB}+20\,\mathrm{KiB}\cdot BS
 </ul>
 <p>两套入口 Norm 的位置和调用顺序可直接在 <code>Block.forward</code> 中看到：<code>hc_pre → attn_norm → Attention</code>，随后是 <code>hc_pre → ffn_norm → MoE</code>。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L1148-L1235">核查：固定 revision 的 <code>Block</code></a></p>
 <h2 id="局部-attention-swa">4. 局部 Attention / SWA</h2>
+<p><img src="assets/chapter4_swa_overview.png?v=b6e11ee29ff8" alt="第 4 章总览：局部 Attention 数据流总览" /></p>
+<p>总图按 4.1—4.3 跟踪 Q、共享窗口 KV、注意力输出及两级输出投影；缓存更新封装在 4.1 中，窗口轴表示逻辑候选，不要求完整物化。</p>
 <p>这一节沿用 mHC 部分的展开方式：先逐步跟踪张量，再给公式与显存账。记 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi></mrow><annotation encoding="application/x-tex">N=BS</annotation></semantics></math>，窗口宽度 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi><mo>=</mo><mn>128</mn></mrow><annotation encoding="application/x-tex">W=128</annotation></semantics></math>；输入 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>U</mi><mo>:</mo><mrow><mo stretchy="true" form="prefix">[</mo><mi>N</mi><mo>,</mo><mn>5120</mn><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">U:[N,5120]</annotation></semantics></math> 已经过 Attention 入口 RMSNorm。</p>
 <h3 id="生成-q共享-kv-与局部窗口">4.1 生成 Q、共享 KV 与局部窗口</h3>
 <p><img src="assets/06_swa_q_kv_window.png?v=6635b9956d45" alt="图 7：SWA 的 Q、共享 KV、RoPE 与窗口缓存" /></p>
@@ -1143,6 +1147,8 @@ M_{\min}=152.84\,\mathrm{MiB}+20\,\mathrm{KiB}\cdot N
 </table>
 <p>当前参考路径先对 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math> 做原地 FP8 量化—反量化模拟，再把结果以 BF16 写入窗口缓存；因此这里按 BF16 cache 计数。<code>freqs_cis</code> 在单层只计一次；虽然相同 RoPE 配置的层理论上可以共享该只读表，固定 revision 的构造器仍为每层分别注册 buffer，整模型实测不能未经验证就按共享扣减。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py#L853-L938">核查：固定 revision 的 <code>Attention</code></a>、<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/kernel.py"><code>act_quant(inplace=True)</code> 与 <code>sparse_attn</code></a></p>
 <h2 id="moe-前馈计算">5. MoE 前馈计算</h2>
+<p><img src="assets/chapter5_moe_overview.png?v=a520aaad55f2" alt="第 5 章总览：MoE 数据流总览" /></p>
+<p>Router 同时输出专家索引 I 和路由权重 w：I 决定参数选择，w 只进入 routed 分支。六个 routed 输出的逻辑视图与 shared 输出在右侧汇总；总图不表示逐 token 复制完整专家参数。</p>
 <p>这一节继续沿用前文的展开方式：先跟踪 Router、专家参数索引和专家计算，再核算参数、计算量与 Required Global Memory 理论下界。记</p>
 <p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>=</mo><mi>B</mi><mi>S</mi><mo>,</mo><mspace width="2.0em"></mspace><mi>H</mi><mo>=</mo><mn>5120</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>M</mi><mo>=</mo><mn>2304</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>E</mi><mo>=</mo><mn>384</mn><mo>,</mo><mspace width="2.0em"></mspace><mi>K</mi><mo>=</mo><mn>6</mn></mrow><annotation encoding="application/x-tex">
 N=BS,\qquad H=5120,\qquad M=2304,\qquad E=384,\qquad K=6

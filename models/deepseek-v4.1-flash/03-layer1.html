@@ -104,6 +104,8 @@ p^{(0)}_{\mathrm{next}}:[B,S,4]\quad\text{(FP32)}.
 </table>
 <p>固定配置中 <code>compress_ratios[1]=0</code>，而 <code>kv_source_layers</code> 与 <code>index_source_layers</code> 都从 Layer 2 开始。因此 Layer 1 与 Layer 0 一样只执行 SWA；本页新增的注意力外路径只有 Engram。<a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/config.json">配置核查</a></p>
 <h2 id="engram">2. Engram</h2>
+<p><img src="assets/chapter2_layer1_engram_overview.png?v=67fabfb6a705" alt="第 2 章总览：Engram 查表、四路门控与残差写回" /></p>
+<p>总图按小节组织：2.1 从 Token 生成地址并查表，输出 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>E</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi></mrow></msub><annotation encoding="application/x-tex">E_{\mathrm{flat}}</annotation></semantics></math>；2.2 结合检索结果和四路残差 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>，输出更新后的四路残差 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Y</mi><annotation encoding="application/x-tex">Y</annotation></semantics></math>。图中合并展示 B、S 两个维度，传入的 <code>pre_next</code> 保持不变。</p>
 <h3 id="从-token-到-24-个查表结果">2.1 从 Token 到 24 个查表结果</h3>
 <p><img src="assets/13_layer1_engram_lookup.png?v=9fa88df07778" alt="图 2：Layer 1 的 Token 压缩、n-gram Hash 与 Engram 查表" /></p>
 <p>图 2 从左到右依次经过 Token 压缩、历史补齐、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>-gram Hash、分区寻址和参数表查找。图中的蓝色块表示数据张量，黄色块表示辅助输入、固定 buffer 或模型参数，绿色块表示计算步骤。其中 <code>T_mask</code> 是用于区分文本与图像位置的 BOOL mask。</p>
@@ -1002,4 +1004,4 @@ M_{\mathrm{Layer1,min}}
 <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/5254448103b6254fc646dacbca1cbbf20e9216c1/inference/model.py">固定 revision 的模型前向</a>：Engram 表、KV 投影、Gate、Block 与跨层 <code>pre_mix</code>。</li>
 </ul>
 <p>全文于 2026-10-20 对照固定 revision <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/5254448103b6254fc646dacbca1cbbf20e9216c1"><code>5254448103b6254fc646dacbca1cbbf20e9216c1</code></a> 重新核算。参数量、计算量和 Required Global Memory 使用本文声明的逻辑口径；官方报告中的模型级近似、官方推理实现的张量分配和具体部署引擎的测量值不混为同一数字。</p>
-</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-11-02<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/03-layer1.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>
+</article><footer>由同一份 Markdown 构建 · 原图可放大查看 · 2026-11-04<br><a href="https://github.com/AbsurdMirror/myBlog/blob/main/docs/models/deepseek-v4.1-flash/03-layer1.md">查看本页 Markdown</a></footer></main><script src="../../_static/viewer.js"></script></body></html>

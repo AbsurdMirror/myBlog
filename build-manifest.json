@@ -1,8 +1,8 @@
 {
   "format_version": 1,
   "mode": "published",
-  "source_commit": "079897a4434c97d50a8d22373367810001f9379b",
-  "built_utc": "2026-11-04T11:23:13.510370+00:00",
+  "source_commit": "df8f8524c6127056fa95d7582315b24212514be5",
+  "built_utc": "2026-11-04T13:59:32.619048+00:00",
   "pages": [
     "index.html",
     "hardware/nvidia-tma/index.html",
@@ -254,12 +254,12 @@
       "bytes": 10498
     },
     "models/deepseek-v4.1-flash/03-layer1.html": {
-      "sha256": "85a7a879a429b0f35b7c0aefa9c3ab6deed0be82c51ef905ff6b49ccbed67def",
-      "bytes": 117439
+      "sha256": "809aa495c61e905b203731bcc84632b9a56c3c3de46c5c2170a3a4465693e09a",
+      "bytes": 118477
     },
     "models/deepseek-v4.1-flash/02-layer0.html": {
-      "sha256": "edcc5399ecdf8fa7061e7ed3a3debc2e3eab71ce7d882908855f7fe15256be65",
-      "bytes": 252891
+      "sha256": "d2f369ab839b9f74d643b0caecf21b46bd5982b9f6d34a58fb44a9a2f5b77ad6",
+      "bytes": 253873
     },
     "models/deepseek-v4.1-flash/index.html": {
       "sha256": "49c06333892be6cb56f2e363085fae57bbb612738ac34e5728860173df88406f",
@@ -277,6 +277,10 @@
       "sha256": "de5c122fe0edf50eaa601cca00f20a17dffd3ab864be2a692b5543907bd80f51",
       "bytes": 160824
     },
+    "models/deepseek-v4.1-flash/assets/chapter4_swa_overview.png": {
+      "sha256": "b6e11ee29ff83ca7f1f149bb0926d870a745bdbad3e721879426e20105b2d265",
+      "bytes": 91135
+    },
     "models/deepseek-v4.1-flash/assets/03_2_mhc_comb.png": {
       "sha256": "d31431f9619eead2b099b4a6f66b9ee35de713e4f8c356249ff4c122a891137a",
       "bytes": 79254
@@ -284,6 +288,18 @@
     "models/deepseek-v4.1-flash/assets/14_layer1_engram_computation.png": {
       "sha256": "f37920efc6a8a1d3af1ebb5a65ac313773931a3879e2cfe1f2f43528d37c4ff5",
       "bytes": 131809
+    },
+    "models/deepseek-v4.1-flash/assets/chapter2_mhc_overview.png": {
+      "sha256": "646af2116042d1d19e685ec4340d90307ab5ffd5f7e3506a2045d19bf7bcb59b",
+      "bytes": 107358
+    },
+    "models/deepseek-v4.1-flash/assets/chapter2_layer1_engram_overview.png": {
+      "sha256": "67fabfb6a705fedb87ea4a27d7a257d9dcf2c750109eb87003e52574dc47eb6d",
+      "bytes": 31811
+    },
+    "models/deepseek-v4.1-flash/assets/chapter5_moe_overview.png": {
+      "sha256": "a520aaad55f20d2a983e5e0975de1134e90ba8520541e30f8d5fa86543e6c18f",
+      "bytes": 147454
     },
     "models/deepseek-v4.1-flash/assets/21_layer2_indexer.png": {
       "sha256": "bb529e1d924e07379a5736b85806342084ce82ea19795e4901ddf30a689547db",
