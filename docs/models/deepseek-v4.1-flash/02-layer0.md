@@ -2,7 +2,7 @@
 title: Layer 0：从四路残差到局部注意力与 MoE
 model: DeepSeek-V4.1-Flash
 status: published
-updated: 2026-11-04
+updated: 2026-11-09
 order: 2
 ---
 
@@ -157,9 +157,11 @@ $$
 
 ### 2.3 四路汇聚 hc_pre
 
-![图 4：四路汇聚 hc_pre](assets/04_mhc_hc_pre.png)
+![图 4：四路汇聚 hc_pre：首次 Attention 入口使用固定系数 1、0、0、0](assets/04_mhc_hc_pre.png)
 
-本次使用的 $\mathrm{pre}$ 由上一子层生成；Layer 0 首次汇聚使用固定值 $[1,0,0,0]$。四路残差分别乘以对应系数，再相加，得到单路输入 $Z$。
+图 4 展示 Layer 0 首次 Attention 入口的汇聚：$a_0=1$，$a_1=a_2=a_3=0$，因此此时 $Z=X_0$。图中保留四路乘法与求和，以展示通用 `hc_pre` 的计算结构。
+
+进入本层 MoE 时，同一汇聚算法使用 Attention 侧生成的动态 `attn_pre`，不再使用这组固定值。一般情况下，四路残差分别乘以对应系数，再相加，得到单路输入 $Z$：
 
 | 对象 | 维度与含义 |
 |---|---|
